@@ -1,0 +1,95 @@
+#!/bin/bash
+# chkconfig: 2345 93 13
+# description:Resin-3.0.21
+
+JAVA_HOME=/data/java/jdk
+export JAVA_HOME
+RESIN_HOME=/usr/local/resin
+export RESIN_HOME
+export PATH=$JAVA_HOME/bin:$CATALINA_HOME/bin:/usr/lib64:$PATH
+
+###########################################
+#                                         #
+#            Maybe edited                 #
+#                                         #
+###########################################
+RESIN_NAME=resin
+JVMMIN=256M
+JVMMAX=512M
+###########################################
+PID=$RESIN_HOME/$RESIN_NAME.pid
+RESIN_CONF=$RESIN_NAME.conf
+prog="$RESIN_NAME"
+jvmlog=$RESIN_NAME.log
+RESIN_USER=www
+SU=/bin/su
+class=com.caucho.server.resin.Resin
+args="-J-Xms$JVMMIN -J-Xmx$JVMMAX -J-server -J-Xss129K  -J-XX:ThreadStackSize=128 -J-XX:PermSize=128m -J-XX:MaxPermSize=128m -J-verbosegc -J-XX:+PrintGCDetails -J-XX:+UseParNewGC -J-XX:+UseConcMarkSweepGC -J-XX:MaxTenuringThreshold=5 -J-XX:CMSInitiatingOccupancyFraction=50 -J-XX:+UseCMSInitiatingOccupancyOnly -J-XX:+CMSParallelRemarkEnabled -J-XX:+PrintGCTimeStamps -Djava.library.path=$RESIN_HOME/libexec:$JAVA_HOME/lib:/usr/lib64 -Djava.awt.headless=true -jvm-log /data/log/resin/$jvmlog -java_home $JAVA_HOME -resin-home $RESIN_HOME -stdout /data/log/resin/$jvmlog -stderr /data/log/resin/$jvmlog"
+
+. /etc/rc.d/init.d/functions
+
+if [ ! -f $RESIN_HOME/bin/wrapper.pl ]
+then
+echo "Resin startup: cannot start"
+exit
+fi
+
+start() {
+ulimit -n 65535
+$SU - $RESIN_USER -c "exec perl $RESIN_HOME/bin/wrapper.pl -chdir -name $prog -class $class $args -conf $RESIN_HOME/conf/$RESIN_CONF start"
+ret=$?
+if [ $ret -eq 0 ]; then
+action $"Starting $prog: " /bin/true
+else
+action $"Starting $prog: " /bin/false
+fi
+}
+
+stop() {
+$SU - $RESIN_USER -c "exec perl $RESIN_HOME/bin/wrapper.pl -chdir -name $prog -class $class $args -conf $RESIN_HOME/conf/$RESIN_CONF stop"
+ret=$?
+if [ -f $PID ]
+then
+$SU - $RESIN_USER -c "kill `cat $PID`" >/dev/null 2>&1
+ret=$?
+rm -f $PID
+fi
+ps auxwww|grep wrapper.pl|grep $RESIN_CONF|grep -v grep >/dev/null 2>&1
+if [ $? -eq 0 ]
+then
+$SU - $RESIN_USER -c "kill `ps auxwww|grep wrapper.pl|grep $RESIN_CONF|awk '{print $2}'`" >/dev/null 2>&1
+ret=$?
+fi
+ps auxwww|grep $RESIN_CONF|grep -v grep >/dev/null 2>&1
+if [ $? -eq 0 ]
+then
+$SU - $RESIN_USER -c "kill -9 `ps auxwww|grep $RESIN_CONF|awk '{print $2}'`" >/dev/null 2>&1
+ret=$?
+fi
+sleep 5
+if [ $ret -eq 0 ]; then
+action $"Stopping $prog: " /bin/true
+else
+action $"Stopping $prog: " /bin/false
+fi
+}
+
+restart() {
+stop
+start
+}
+
+case "$1" in
+start)
+start
+;;
+stop)
+stop
+;;
+restart)
+restart
+;;
+*)
+echo $"Usage: $0 {start|stop|restart}"
+exit 1
+esac

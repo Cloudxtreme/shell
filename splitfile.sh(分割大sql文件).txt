@@ -1,0 +1,13 @@
+[liangsh@DmuspReleaseSql5 ~]$ more splitfile.sh 
+#!/bin/bash
+MAX=774
+for (( i = 1; i <= MAX ; i ++ ))
+do
+head -n 20000 134.txt |sed 1'i\insert into BlackList (Phone,UpdateTime,Phone3) values'|sed '$s/),/);/' > $i
+sed -i '1,20000d' 134.txt 
+done
+
+#head -n 20000 file --提取file文件前20000行
+#sed 1'i\abc'---在第一行插入abc
+#sed '$s/),/);/' --$为最后一行，s为替换，把“),”替换为“);”
+#sed -i '1,20000d' file--删除file文件1至20000行

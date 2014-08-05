@@ -1,0 +1,21 @@
+SENDER="dv_support@139.com"
+currentDay=`date +%u`
+currentTime=`date +%H%M`
+if [[ "${currentDay}" > "5" || "${currentTime}" < "0930" || "${currentTime}" > "1800" ]]
+then
+    TO_WHO="dv_support@139.com,support@cndw.com"
+else 
+    TO_WHO="support@cndw.com"       
+fi
+
+SMTP_SVR="smtp.139.com"
+SMTP_USR="dv_support"
+SMTP_PSW="7949@cndw"
+
+# env MAILRC=/dev/null \
+# from=$SENDER \
+# smtp=$SMTP_SVR \
+# smtp-auth-user=$SMTP_USR \
+# smtp-auth-password=$SMTP_PSW \
+# smtp-auth=login \
+# nail -n -s $SUBJECT $TO_WHO < $MAIL_FILE

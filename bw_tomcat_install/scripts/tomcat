@@ -1,0 +1,27 @@
+#!/bin/bash  
+# description: Tomcat Start Stop Restart  
+# processname: tomcat  
+# chkconfig: 234 20 80  
+JAVA_HOME=/data/java/jdk  
+export JAVA_HOME  
+PATH=$JAVA_HOME/bin:$PATH  
+export PATH  
+TOMCAT_HOME=/usr/local/tomcat
+  
+case $1 in  
+start)  
+/bin/su - www $TOMCAT_HOME/bin/startup.sh  
+;;   
+stop)     
+/bin/su - www $TOMCAT_HOME/bin/shutdown.sh  
+;;   
+restart)  
+/bin/su - www $TOMCAT_HOME/bin/shutdown.sh  
+/bin/su - www $TOMCAT_HOME/bin/startup.sh  
+;;
+*)
+echo $"Usage: $0 {start|stop|restart}"
+exit 1 
+esac      
+exit 0  
+

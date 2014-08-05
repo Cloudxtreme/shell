@@ -1,0 +1,85 @@
+#!/bin/bash
+# chkconfig: 2345 93 13
+# description:Resin-4.0.26
+
+JAVA_HOME=/data/java/jdk
+export JAVA_HOME
+RESIN_HOME=/usr/local/resin1_pro_4.0.23
+export RESIN_HOME
+export PATH=$JAVA_HOME/bin:$CATALINA_HOME/bin:/usr/lib64:$PATH
+JAVA_EXE="/data/java/jdk/bin/java -d64"
+
+###########################################
+#                                         #
+#            Maybe edited                 #
+#                                         #
+###########################################
+RESIN_NAME=resin1_pro_4.0.23
+JVMMIN=1024M
+JVMMAX=1500M
+###########################################
+PID=$RESIN_HOME/$RESIN_NAME.pid
+RESIN_CONF="-conf /usr/local/$RESIN_NAME/conf/$RESIN_NAME.xml"
+prog="$RESIN_NAME"
+jvmlog="-log-directory /data/log/$RESIN_NAME"
+RESIN_USER=root
+SU=/bin/su
+class=com.caucho.server.resin.Resin
+#JAVA_ARGS="-server -Xms$JVMMIN -Xmx$JVMMAX -Xss129K -XX:ThreadStackSize=128 -XX:PermSize=128m -XX:MaxPermSize=128m -verbosegc -XX:+PrintGCDetails -XX:+UseParNewGC -XX:+UseConcMarkSweepGC -XX:MaxTenuringThreshold=5 -XX:CMSInitiatingOccupancyFraction=50 -XX:+UseCMSInitiatingOccupancyOnly -XX:+CMSParallelRemarkEnabled -XX:+PrintGCTimeStamps -Djava.library.path=/usr/local/resin/libexec64/:/usr/local/jdk/lib/:/usr/lib64/ -Djava.awt.headless=true"
+
+args="$RESIN_CONF $jvmlog"
+. /etc/rc.d/init.d/functions
+
+start() {
+ulimit -n 65535
+if test -n "$RESIN_USER";then
+$SU - $RESIN_USER -c "$JAVA_EXE $JAVA_ARGS -jar $RESIN_HOME/lib/resin.jar $args $* start" 1>/dev/null 2>/dev/null
+else
+$JAVA_EXE $JAVA_ARGS -jar $RESIN_HOME/lib/resin.jar $args $* start 1>/dev/null 2>/dev/null
+fi
+ret=$?
+if [ $ret -eq 0 ]; then
+action $"Starting $prog: " /bin/true
+else
+action $"Starting $prog: " /bin/false
+fi
+}
+
+stop() {
+if test -n "$RESIN_USER";then
+$SU - $RESIN_USER -c "$JAVA_EXE $JAVA_ARGS -jar $RESIN_HOME/lib/resin.jar $args $* stop" 1>/dev/null 2>/dev/null
+else
+$JAVA_EXE $JAVA_ARGS -jar $RESIN_HOME/lib/resin.jar $args $* stop 1>/dev/null 2>/dev/null
+fi
+ret=$?
+
+sleep 5
+$SU - $RESIN_USER -c "kill -9 `ps -ef|grep $RESIN_NAME|grep -v grep|awk '{print $2}'`" >/dev/null 2>&1
+
+sleep 5
+if [ $ret -eq 0 ]; then
+action $"Stopping $prog: " /bin/true
+else
+action $"Stopping $prog: " /bin/false
+fi
+}
+
+restart() {
+stop
+start
+}
+
+case "$1" in
+start)
+start
+;;
+stop)
+stop
+;;
+restart)
+restart
+;;
+*)
+echo $"Usage: $0 {start|stop|restart}"
+exit 1
+esac

@@ -1,0 +1,104 @@
+#!/bin/sh
+#
+# ldap This shell script takes care of starting and stopping
+# ldap servers (slapd and slurpd).
+#
+# chkconfig: - 70 40
+# description: LDAP stands for Lightweight Directory Access Protocol, used
+# for implementing the industry standard directory services.
+# processname: slapd
+# config: /etc/openldap/slapd.conf
+# pidfile: /var/run/slapd.pid
+# Source function library.
+. /etc/rc.d/init.d/functions
+# Source networking configuration.
+. /etc/sysconfig/network
+# Check that networking is up.
+#[ ${NETWORKING} = "no" ] && exit 0
+[ -f /usr/local/openldap-2.4.24/libexec/slapd ] || exit 0
+#[ -f /usr/sbin/slurpd ] || exit 0
+#RETVAL=0
+
+slapd=/usr/local/openldap-2.4.24/libexec/slapd
+#conf=/usr/local/etc/openldap/slapd.conf
+conf=/usr/local/openldap-2.4.24/etc/openldap/slapd.conf
+# See how we were called.
+case "$1" in
+start)
+PID=`ps aux |grep "openldap-2.4.24" |grep -v grep |awk '{print $2}'`
+if [[ $PID -ne 0  ]];then
+echo "Openldap is running,exit!"
+exit
+fi
+# Start daemons.
+echo -n "Starting ldap: "
+daemon $slapd -u ldap -g ldap -f $conf
+RETVAL=$?
+        if [ $RETVAL -eq 0 ]; then
+		touch /var/lock/subsys/ldap
+                action $"Starting Openldap: "  /bin/true
+        else
+                action $"Starting Openldap: "  /bin/false
+        fi
+#if [ $RETVAL -eq 0 ]; then
+#if grep -q "^replogfile" $conf; then
+#daemon slurpd
+#RETVAL=$?
+#[ $RETVAL -eq 0 ] && pidof slurpd | cut -f 1 -d " " > /var/run/slurpd
+#fi
+#fi
+;;
+stop)
+# Stop daemons.
+echo -n "Shutting down ldap: "
+killproc $slapd
+RETVAL=$?
+#if [ $RETVAL -eq 0 ]; then
+#if grep -q "^replogfile" /etc/openldap/slapd.conf; then
+#killproc slurpd
+#RETVAL=$?
+#fi
+#fi
+if [ $RETVAL -eq 0 ]; then
+rm -f /var/lock/subsys/ldap
+rm -f /var/run/slapd.args
+action $"Stoping Openldap: "  /bin/true
+else
+action $"Stoping Openldap: "  /bin/false
+fi
+;;
+status)
+status $slapd
+RETVAL=$?
+#        if [ $RETVAL -eq 0 ]; then
+#               echo "Openldap is running!"
+#        else
+#               echo "Openldap is stoped!"
+#        fi
+#if [ $RETVAL -eq 0 ]; then
+#if grep -q "^replogfile" /etc/openldap/slapd.conf; then
+#status slurpd
+#RETVAL=$?
+#fi
+#fi
+;;
+restart)
+$0 stop
+$0 start
+RETVAL=$?
+;;
+reload)
+killproc -HUP $slapd
+RETVAL=$?
+#if [ $RETVAL -eq 0 ]; then
+#if grep -q "^replogfile" /etc/openldap/slapd.conf; then
+#killproc -HUP slurpd
+#RETVAL=$?
+#fi
+#fi
+;;
+*)
+echo "Usage: $0 start|stop|restart|status}"
+exit 1
+esac
+exit $RETVAL

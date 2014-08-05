@@ -1,0 +1,2 @@
+/sbin/ifconfig eth0 txqueuelen 1000
+/sbin/ifconfig eth1 txqueuelen 1000

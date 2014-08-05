@@ -1,0 +1,20 @@
+[BEGIN] 2012-1-20 10:02:30
+cat filesize.sh 
+#!/bin/bash
+#arr=(123 34 3 5)
+#arry=`du /var/log|cut -f 2`
+#echo ${arr[2]}
+#echo ${arry[1]}
+dirname=(`du $1|sort -nr|cut -f 2`)
+#dirname=(`du /var/log|sort -nr`)
+#filename=(`find /var/log -type f|xargs du|sort -nr`)
+for dirvar in ${dirname[@]};do
+echo $dirvar 
+find $dirvar -type f|xargs du|sort -nr
+done
+#for filevar in ${filename[@]};do
+#awk '{print $1,$2}' $filevar
+#printf "$filevar\n"
+#done
+[root@zabbix-ldap-vpn liangsh]# 
+[END] 2012-1-20 10:03:06

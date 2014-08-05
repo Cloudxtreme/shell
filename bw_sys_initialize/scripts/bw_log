@@ -1,0 +1,10 @@
+/data/log/*.log {
+	copytruncate
+	missingok
+	nocompress
+	noolddir
+	notifempty
+	rotate 10
+	size 100M
+	nomail
+}
