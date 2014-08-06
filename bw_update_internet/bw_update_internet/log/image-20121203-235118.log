@@ -1,0 +1,8 @@
+更新IMAGE图片文件的服务器和IMAGE目录如下：
+113.108.228.40:/data/www/img.baoxian.com:/data/bak
+58.83.219.233:/data/www/html:/data/bak
+/data/update/update/package/image/InsB2C-0.1-static-files.zip解压成功。/data/update/update/package/image/InsB2C-0.1-static-files.zip已经删除。
+113.108.228.40服务器上的IMAGE更新完成.
+备份文件是:/data/bak/image-img.baoxian.com-20121203-235118
+58.83.219.233服务器上的IMAGE更新完成.
+备份文件是:/data/bak/image-html-20121203-235118

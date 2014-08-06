@@ -1,0 +1,5 @@
+更新WEB服务的服务器和WEB目录如下：
+125.39.195.166:/data/www/html:/data/bak
+/data/update/update/package/war/InsB2C-0.1.war解压成功。/data/update/update/package/war/InsB2C-0.1.war已经删除。
+125.39.195.166服务器上的WEB更新完成.
+备份文件是:/data/bak/web-20121218-144616

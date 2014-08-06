@@ -1,0 +1,2394 @@
+#!/bin/bash
+#Filename:update.sh
+#Author:Yuxian,Qiu
+#Update:2012-05-11
+PATH=/usr/local/mysql/bin:/usr/local/sbin:/usr/local/bin:/sbin:/bin:/usr/sbin:/usr/bin
+DATE=`date +%Y%m%d-%H%M%S`
+ROOT=$(pwd)
+CONF=$ROOT/conf
+CONF_TEMPLATE=$ROOT/template
+PACKAGE=$ROOT/package
+LOG=$ROOT/log
+PRIVATE_KEY=$ROOT/keys/id_rsa
+
+if [ $# -ne "2" ];then
+        echo "usage ./$0 b2b_com|b2c_com|b2c_admin|cx|t|ssogo|b2c_zw zzb|atm|cipm|cm|cx|go2|order|resin|image|dsl|carimage|mysql|mongodb|conf|all|alltrust_net|alltrust_tradition|bpic_net|cpic_net|sinosafe_tradition|sinosig_net|tpaic_net|virtual_net|ehuatai_tradition"
+        exit
+fi
+
+echo "Enter SSH User Name:"
+read SSH_USER
+echo "Enter SSH Password for Private key:"
+read SSH_PASSWORD
+
+#WEB数据更新
+update_resin()
+{
+cat $CONF/resin.conf | while read line
+do
+	WEB_SERVER_IP=`echo $line|awk -F: '{print $1}'`
+	WEB_DIR=`echo $line|awk -F: '{print $2}'`
+	BACKUP_DIR=`echo $line|awk -F: '{print $3}'`
+	
+	#进行应用备份和关闭Resin服务
+	 expect -c "
+		spawn /usr/bin/ssh -o StrictHostKeyChecking=no -i $PRIVATE_KEY $SSH_USER@$WEB_SERVER_IP
+		set timeout -1
+		expect \"\*Enter passphrase\*:\"
+		send \"$SSH_PASSWORD\r\"
+		expect \"\*]*\"
+		send \"sudo /bin/cp -a $WEB_DIR $BACKUP_DIR/web-$DATE\r\"
+		expect \"\*]*\"
+		send \"sudo /etc/init.d/resin stop\r\"
+		expect \"\*]*\"
+		send \"for i in `ps -ef|grep resin|grep -v grep|awk -F' ' '{print $2}'`;sudo  do kill -9 $i; done\r\"
+		expect \"\*]*\"
+		send \"exit\r\"
+		expect eof
+		"
+	 rev_stop=`echo $?`
+	 if [[ $rev_stop -eq 0 ]];then
+	#更新WEB数据
+			expect -c "
+			spawn /usr/bin/ssh -o StrictHostKeyChecking=no -i $PRIVATE_KEY $SSH_USER@$WEB_SERVER_IP
+			set timeout -1
+			expect \"\*Enter passphrase\*:\"
+			send \"$SSH_PASSWORD\r\"
+			expect \"\*]*\"
+			send \"sudo /usr/bin/rsync -av --delete --exclude=*/.svn --exclude=*/classes/datasource.properties --exclude=*/robots.txt --exclude=*/deployerConfigContext.xml rsync://$RSYNC_SERVER/$RSYNC_SHARE_WEB_DIR $WEB_DIR\r\"
+			expect \"\*]*\"
+			send \"sudo chown www.www -R $WEB_DIR\r\"
+			expect \"\*]*\"
+			send \"exit\r\"
+			expect eof
+			"
+		rev_rsync=`echo $?`
+		if [[ $rev_rsync -eq 0 ]];then
+		#启动resin服务
+			expect -c "
+				spawn /usr/bin/ssh -o StrictHostKeyChecking=no -i $PRIVATE_KEY $SSH_USER@$WEB_SERVER_IP
+				set timeout -1
+				expect \"\*Enter passphrase\*:\"
+				send \"$SSH_PASSWORD\r\"
+				expect \"\*]*\"
+				send \"sudo /etc/init.d/resin start\r\"
+				expect \"\*]*\"
+				send \"exit\r\"
+				expect eof
+				"
+			rev_start=`echo $?`
+			if [[ $rev_start -eq 0 ]];then
+				echo "$WEB_SERVER_IP服务器上的WEB更新完成."|tee -a $LOG/resin-$DATE.log
+				echo "备份文件是:$BACKUP_DIR/web-$DATE"|tee -a $LOG/resin-$DATE.log
+			else
+				echo "$WEB_SERVER_IP服务器上的RESIN服务启动不成功!!!"|tee -a $LOG/resin-$DATE.log
+				continue
+			fi
+		else
+			echo "$WEB_SERVER_IP服务器上的数据更新不成功!!!"|tee -a $LOG/resin-$DATE.log
+			continue
+		fi
+	 else
+		echo "$WEB_SERVER_IP服务器上的RESIN服务停止不成功!!!"|tee -a $LOG/resin-$DATE.log
+		continue
+	 fi
+done
+}
+
+update_image()
+{
+cat $CONF/image.conf | while read line
+do
+	IMAGE_SERVER_IP=`echo $line|awk -F: '{print $1}'`
+	IMAGE_DIR=`echo $line|awk -F: '{print $2}'`
+	BACKUP_DIR=`echo $line|awk -F: '{print $3}'`
+	IMAGE_BASENAME=`basename $IMAGE_DIR`
+
+	#进行图片备份
+	 expect -c "
+		spawn /usr/bin/ssh -o StrictHostKeyChecking=no -i $PRIVATE_KEY $SSH_USER@$IMAGE_SERVER_IP
+		set timeout -1
+		expect \"\*Enter passphrase\*:\"
+		send \"$SSH_PASSWORD\r\"
+		expect \"\*]*\"
+		send \"sudo /bin/cp -a $IMAGE_DIR $BACKUP_DIR/image-$IMAGE_BASENAME-$DATE\r\"
+		expect \"\*]*\"
+		send \"exit\r\"
+		expect eof
+		"
+	 rev_backup=`echo $?`
+	 if [[ $rev_backup -eq 0 ]];then
+	#更新IMAGE数据
+			expect -c "
+			spawn /usr/bin/ssh -o StrictHostKeyChecking=no -i $PRIVATE_KEY $SSH_USER@$IMAGE_SERVER_IP
+			set timeout -1
+			expect \"\*Enter passphrase\*:\"
+			send \"$SSH_PASSWORD\r\"
+			expect \"\*]*\"
+			send \"sudo /usr/bin/rsync -av --delete --exclude=*/.svn rsync://$RSYNC_SERVER/$RSYNC_SHARE_IMAGE_DIR/css $IMAGE_DIR\r\"
+			expect \"\*]*\"
+			send \"sudo /usr/bin/rsync -av --delete --exclude=*/.svn rsync://$RSYNC_SERVER/$RSYNC_SHARE_IMAGE_DIR/js $IMAGE_DIR\r\"
+			expect \"\*]*\"
+			send \"sudo /usr/bin/rsync -av --delete --exclude=*/.svn rsync://$RSYNC_SERVER/$RSYNC_SHARE_IMAGE_DIR/images $IMAGE_DIR\r\"
+                        expect \"\*]*\"
+                        send \"sudo chown www.www -R $IMAGE_DIR\r\"
+			expect \"\*]*\"
+			send \"exit\r\"
+			expect eof
+			"
+		rev_rsync=`echo $?`
+		if [[ $rev_rsynv -eq 0 ]];then
+			echo "$IMAGE_SERVER_IP服务器上的IMAGE更新完成."|tee -a $LOG/image-$DATE.log
+			echo "备份文件是:$BACKUP_DIR/image-$IMAGE_BASENAME-$DATE"|tee -a $LOG/image-$DATE.log
+		else
+			echo "$IMAGE_SERVER_IP服务器上的IMAGE数据同步不成功!!!"|tee -a $LOG/image-$DATE.log
+			continue
+		fi
+	 else
+		echo "$IMAGE_SERVER_IP服务器上的备份不成功!!!"|tee -a $LOG/image-$DATE.log
+		continue
+	 fi
+done
+}
+
+update_dsl()
+{
+cat $CONF/dsl.conf | while read line
+do
+	DSL_SERVER_IP=`echo $line|awk -F: '{print $1}'`
+	DSL_DIR=`echo $line|awk -F: '{print $2}'`
+	BACKUP_DIR=`echo $line|awk -F: '{print $3}'`
+
+	#进行DSL文件备份
+	 expect -c "
+		spawn /usr/bin/ssh -o StrictHostKeyChecking=no -i $PRIVATE_KEY $SSH_USER@$DSL_SERVER_IP
+		set timeout -1
+		expect \"\*Enter passphrase\*:\"
+		send \"$SSH_PASSWORD\r\"
+		expect \"\*]*\"
+		send \"sudo /bin/cp -a $DSL_DIR $BACKUP_DIR/dsl-$DATE\r\"
+		expect \"\*]*\"
+		send \"exit\r\"
+		expect eof
+		"
+	 rev_backup=`echo $?`
+	 if [[ $rev_backup -eq 0 ]];then
+	#更新DSL文件
+			expect -c "
+			spawn /usr/bin/ssh -o StrictHostKeyChecking=no -i $PRIVATE_KEY $SSH_USER@$DSL_SERVER_IP
+			set timeout -1
+			expect \"\*Enter passphrase\*:\"
+			send \"$SSH_PASSWORD\r\"
+			expect \"\*]*\"
+			send \"sudo /usr/bin/rsync -av --exclude=*/.svn rsync://$RSYNC_SERVER/$RSYNC_SHARE_DSL_DIR $DSL_DIR\r\"
+			expect \"\*]*\"
+			send \"sudo chown www.www -R $DSL_DIR\r\"
+			expect \"\*]*\"
+			send \"exit\r\"
+			expect eof
+			"
+		rev_rsync=`echo $?`
+		if [[ $rev_rsynv -eq 0 ]];then
+			echo "$DSL_SERVER_IP服务器上的DSL文件更新完成."|tee -a $LOG/dsl-$DATE.log
+			echo "备份文件是:$BACKUP_DIR/dsl-$DATE"|tee -a $LOG/dsl-$DATE.log
+		else
+			echo "$DSL_SERVER_IP服务器上的DSL文件同步不成功!!!"|tee -a $LOG/dsl-$DATE.log
+			continue
+		fi
+	 else
+		echo "$DSL_SERVER_IP服务器上的备份不成功!!!"|tee -a $LOG/dsl-$DATE.log
+		continue
+	 fi
+done
+}
+
+update_carimage()
+{
+cat $CONF/carimage.conf | while read line
+do
+	CARIMAGE_SERVER_IP=`echo $line|awk -F: '{print $1}'`
+	CARIMAGE_DIR=`echo $line|awk -F: '{print $2}'`
+	BACKUP_DIR=`echo $line|awk -F: '{print $3}'`
+
+	#进行carimage文件备份
+	 expect -c "
+		spawn /usr/bin/ssh -o StrictHostKeyChecking=no -i $PRIVATE_KEY $SSH_USER@$CARIMAGE_SERVER_IP
+		set timeout -1
+		expect \"\*Enter passphrase\*:\"
+		send \"$SSH_PASSWORD\r\"
+		expect \"\*]*\"
+		send \"sudo /bin/cp -a $CARIMAGE_DIR $BACKUP_DIR/carimage-$DATE\r\"
+		expect \"\*]*\"
+		send \"exit\r\"
+		expect eof
+		"
+	 rev_backup=`echo $?`
+	 if [[ $rev_backup -eq 0 ]];then
+	#更新carimage文件
+			expect -c "
+			spawn /usr/bin/ssh -o StrictHostKeyChecking=no -i $PRIVATE_KEY $SSH_USER@$CARIMAGE_SERVER_IP
+			set timeout -1
+			expect \"\*Enter passphrase\*:\"
+			send \"$SSH_PASSWORD\r\"
+			expect \"\*]*\"
+			send \"sudo /usr/bin/rsync -av --delete --exclude=*/.svn rsync://$RSYNC_SERVER/$RSYNC_SHARE_CARIMAGE_DIR $CARIMAGE_DIR\r\"
+			expect \"\*]*\"
+			send \"sudo chown www.www -R $CARIMAGE_DIR\r\"
+			expect \"\*]*\"
+			send \"exit\r\"
+			expect eof
+			"
+		rev_rsync=`echo $?`
+		if [[ $rev_rsynv -eq 0 ]];then
+			echo "$CARIMAGE_SERVER_IP服务器上的CARIMAGE文件更新完成."|tee -a $LOG/carimage-$DATE.log
+			echo "备份文件是:$BACKUP_DIR/carimage-$DATE"|tee -a $LOG/carimage-$DATE.log
+		else
+			echo "$CARIMAGE_SERVER_IP服务器上的CARIMAGE文件同步不成功!!!"|tee -a $LOG/carimage-$DATE.log
+			continue
+		fi
+	 else
+		echo "$CARIMAGE_SERVER_IP服务器上的备份不成功!!!"|tee -a $LOG/carimage-$DATE.log
+		continue
+	 fi
+done
+}
+
+update_conf()
+{
+cat $CONF/conf.txt | while read line
+do
+	CONF_SERVER_IP=`echo $line|awk -F: '{print $1}'`
+	CONF_DIR=`echo $line|awk -F: '{print $2}'`
+	BACKUP_DIR=`echo $line|awk -F: '{print $3}'`
+
+	#进行配置文件备份
+	 expect -c "
+		spawn /usr/bin/ssh -o StrictHostKeyChecking=no -i $PRIVATE_KEY $SSH_USER@$CONF_SERVER_IP
+		set timeout -1
+		expect \"\*Enter passphrase\*:\"
+		send \"$SSH_PASSWORD\r\"
+		expect \"\*]*\"
+		send \"sudo /bin/cp -a $CONF_DIR $BACKUP_DIR/conf-$DATE\r\"
+		expect \"\*]*\"
+		send \"exit\r\"
+		expect eof
+		"
+	 rev_backup=`echo $?`
+	 if [[ $rev_backup -eq 0 ]];then
+	#更新配置文件
+			expect -c "
+			spawn /usr/bin/ssh -o StrictHostKeyChecking=no -i $PRIVATE_KEY $SSH_USER@$CONF_SERVER_IP
+			set timeout -1
+			expect \"\*Enter passphrase\*:\"
+			send \"$SSH_PASSWORD\r\"
+			expect \"\*]*\"
+			send \"sudo /usr/bin/rsync -av --exclude=*/.svn rsync://$RSYNC_SERVER/$RSYNC_SHARE_CONF_DIR $CONF_DIR\r\"
+			expect \"\*]*\"
+			send \"sudo chown www.www -R $CONF_DIR\r\"
+			expect \"\*]*\"
+			send \"exit\r\"
+			expect eof
+			"
+		rev_rsync=`echo $?`
+		if [[ $rev_rsynv -eq 0 ]];then
+			echo "$CONF_SERVER_IP服务器上的配置文件更新完成."|tee -a $LOG/conf-$DATE.log
+			echo "备份文件是:$BACKUP_DIR/conf-$DATE"|tee -a $LOG/conf-$DATE.log
+		else
+			echo "$CONF_SERVER_IP服务器上的配置文件同步不成功!!!"|tee -a $LOG/conf-$DATE.log
+			continue
+		fi
+	 else
+		echo "$CONF_SERVER_IP服务器上的备份不成功!!!"|tee -a $LOG/conf-$DATE.log
+		continue
+	 fi
+done
+}
+
+update_mysql()
+{
+. $CONF/mysql.conf
+
+#进行Mysql备份
+expect -c "
+	spawn /usr/bin/ssh -o StrictHostKeyChecking=no -i $PRIVATE_KEY $SSH_USER@$MYSQL_HOST
+	set timeout -1
+	expect \"\*Enter passphrase\*:\"
+	send \"$SSH_PASSWORD\r\"
+	expect \"\*]*\"
+	send \"sudo /bin/sh /data/bw_mon/bw_mysqlbk/bw_mysqlbk.sh\r\"
+	expect \"\*]*\"
+	send \"exit\r\"
+	expect eof
+	"
+	
+rev_backup=`echo $?`
+if [[ $rev_backup -eq 0 ]];then
+	#同步SQL文件到Mysql服务器/data/tools目录
+	expect -c "
+	spawn /usr/bin/ssh -o StrictHostKeyChecking=no -i $PRIVATE_KEY $SSH_USER@$MYSQL_HOST
+	set timeout -1
+	expect \"\*Enter passphrase\*:\"
+	send \"$SSH_PASSWORD\r\"
+	expect \"\*]*\"
+	send \"sudo /usr/bin/rsync -av --exclude=*/.svn rsync://$RSYNC_SERVER/$RSYNC_SHARE_SQL_DIR /data/tools\r\"
+	expect \"\*]*\"
+	send \"exit\r\"
+	expect eof
+	"
+	rev_rsync=`echo $?`
+	if [[ $rev_rsynv -eq 0 ]];then
+		#执行SQL语句
+		for sql in $SQL_FILE
+		do
+			expect -c "
+			spawn /usr/bin/ssh -o StrictHostKeyChecking=no -i $PRIVATE_KEY $SSH_USER@$MYSQL_HOST
+			set timeout -1
+			expect \"\*Enter passphrase\*:\"
+			send \"$SSH_PASSWORD\r\"
+			expect \"\*]*\"
+			send \"sudo /usr/local/mysql/bin/mysql -u$MYSQL_USER -p\'$MYSQL_PASSWORD\' --default-character-set=utf8 $MYSQL_DB_NAME </data/tools/$sql\r\"
+			expect \"\*]*\"
+			send \"exit\r\"
+			expect eof
+			"|tee -a $LOG/mysql-$DATE.log	
+		rev_exec_sql=`echo $?`
+		if [[ $rev_exec_sql -eq	0 ]];then
+			echo "$MYSQL_HOST服务器上执行$sql成功。"|tee -a $LOG/mysql-$DATE.log
+		else
+			echo "$MYSQL_HOST服务器上执行$sql不成功。"|tee -a $LOG/mysql-$DATE.log
+			continue
+		fi
+		done
+	else
+			echo "$MYSQL_HOST服务器上的SQL文件同步不成功!!!"|tee -a $LOG/mysql-$DATE.log
+	fi
+else
+		echo "$MYSQL_HOST服务器上的备份不成功!!!"|tee -a $LOG/mysql-$DATE.log
+fi
+}
+
+update_mongodb()
+{
+. $CONF/mongodb.conf
+
+#进行Mongodb备份
+expect -c "
+	spawn /usr/bin/ssh -o StrictHostKeyChecking=no -i $PRIVATE_KEY $SSH_USER@$MONGODB_IP
+	set timeout -1
+	expect \"\*Enter passphrase\*:\"
+	send \"$SSH_PASSWORD\r\"
+	expect \"\*]*\"
+	send \"sudo /bin/sh /data/bw_mon/bw_mongobk/bw_mongodb.sh\r\"
+	expect \"\*]*\"
+	send \"exit\r\"
+	expect eof
+	"
+	
+rev_backup=`echo $?`
+if [[ $rev_backup -eq 0 ]];then
+	#同步MONGODB数据文件到MONGODB服务器/data/tools目录
+	expect -c "
+	spawn /usr/bin/ssh -o StrictHostKeyChecking=no -i $PRIVATE_KEY $SSH_USER@$MONGODB_IP
+	set timeout -1
+	expect \"\*Enter passphrase\*:\"
+	send \"$SSH_PASSWORD\r\"
+	expect \"\*]*\"
+	send \"sudo /usr/bin/rsync -av --exclude=*/.svn rsync://$RSYNC_SERVER/$RSYNC_SHARE_MONGODB_DIR /data/tools\r\"
+	expect \"\*]*\"
+	send \"exit\r\"
+	expect eof
+	"
+	rev_rsync=`echo $?`
+	if [[ $rev_rsynv -eq 0 ]];then
+		#执行MONGODB还原语句
+		expect -c "
+		spawn /usr/bin/ssh -o StrictHostKeyChecking=no -i $PRIVATE_KEY $SSH_USER@$MONGODB_IP
+		set timeout -1
+		expect \"\*Enter passphrase\*:\"
+		send \"$SSH_PASSWORD\r\"
+		expect \"\*]*\"
+		send \"sudo /usr/local/mongodb/bin/mongorestore -d $MONGODB_DB_NAME -drop --directoryperdb /data/tools/$MONGODB_SQL_DIR\r\"
+		expect \"\*]*\"
+		send \"exit\r\"
+		expect eof
+		"
+				
+		rev_exec_sql=`echo $?`
+		if [[ $rev_exec_sql -eq 0 ]];then
+			echo "$MONGODB_IP服务器上更新MONGODB成功。"|tee -a $LOG/mongodb-$DATE.log
+			expect -c "
+			spawn /usr/bin/ssh -o StrictHostKeyChecking=no -i $PRIVATE_KEY $SSH_USER@$MONGODB_IP
+			set timeout -1
+			expect \"\*Enter passphrase\*:\"
+			send \"$SSH_PASSWORD\r\"
+			expect \"\*]*\"
+			send \"sudo echo 'show dbs'|/usr/local/mongodb/bin/mongo\r\"
+			expect \"\*]*\"
+			send \"exit\r\"
+			expect eof
+			"|tee -a $LOG/mongodb-$DATE.log
+		else
+			echo "$MONGODB_IP服务器上更新MONGODB不成功。"|tee -a $LOG/mongodb-$DATE.log
+		fi
+	else
+		echo "$MONGODB_IP服务器上的MONGODB数据文件同步不成功!!!"|tee -a $LOG/mongodb-$DATE.log
+	fi
+else
+	echo "$MONGODB_IP服务器上的备份不成功!!!"|tee -a $LOG/mongodb-$DATE.log
+fi
+}
+
+update_zzb()
+{
+cat $CONF/zzb.conf | while read line
+do
+	WEB_SERVER_IP=`echo $line|awk -F: '{print $1}'`
+	WEB_DIR=`echo $line|awk -F: '{print $2}'`
+	
+	#创建目录
+	 expect -c "
+		spawn /usr/bin/ssh -o StrictHostKeyChecking=no -i $PRIVATE_KEY $SSH_USER@$WEB_SERVER_IP
+		set timeout -1
+		expect \"\*Enter passphrase\*:\"
+		send \"$SSH_PASSWORD\r\"
+		expect \"\*]*\"
+		send \"sudo mkdir $WEB_DIR$DATE\r\"
+		expect \"\*]*\"
+		send \"sudo cp -apf $WEB_DIR/* $WEB_DIR$DATE\r\"
+		expect \"\*]*\"
+		send \"exit\r\"
+		expect eof
+		"
+	 rev_md=`echo $?`
+	 if [[ $rev_md -eq 0 ]];then
+	#更新WEB数据
+			expect -c "
+			spawn /usr/bin/ssh -o StrictHostKeyChecking=no -i $PRIVATE_KEY $SSH_USER@$WEB_SERVER_IP
+			set timeout -1
+			expect \"\*Enter passphrase\*:\"
+			send \"$SSH_PASSWORD\r\"
+			expect \"\*]*\"
+			send \"sudo /usr/bin/rsync -av --delete --exclude=*/.svn --exclude=*/classes/connector_config.properties --exclude=*/classes/context-config.properties --exclude=*/classes/jdbc* --exclude=*/classes/log4j.properties rsync://$RSYNC_SERVER/$RSYNC_SHARE_ZZB_DIR $WEB_DIR$DATE\r\"
+			expect \"\*]*\"
+			send \"exit\r\"
+			expect eof
+			"
+		rev_rsync=`echo $?`
+		if [[ $rev_rsync -eq 0 ]];then
+		#启动resin服务
+			expect -c "
+				spawn /usr/bin/ssh -o StrictHostKeyChecking=no -i $PRIVATE_KEY $SSH_USER@$WEB_SERVER_IP
+				set timeout -1
+				expect \"\*Enter passphrase\*:\"
+				send \"$SSH_PASSWORD\r\"
+				expect \"\*]*\"
+				send \"sudo /etc/init.d/tomcat stop\r\"
+				expect \"\*]*\"
+				send \"cd /data/www\r\"
+				expect \"\*]*\"
+				send \"sudo unlink html\r\"
+				expect \"\*]*\"
+				send \"sudo ln -s html$DATE html\r\"
+				expect \"\*]*\"
+				send \"sudo chown www.www -R *\r\"
+			        expect \"\*]*\"
+				send \"sudo /etc/init.d/tomcat start\r\"
+				expect \"\*]*\"
+				send \"exit\r\"
+				expect eof
+				"
+			rev_start=`echo $?`
+			if [[ $rev_start -eq 0 ]];then
+				echo "$WEB_SERVER_IP服务器上的WEB更新完成."|tee -a $LOG/zzb-$DATE.log
+				#echo "备份文件是:$BACKUP_DIR/web-$DATE"|tee -a $LOG/resin-$DATE.log
+			else
+				echo "$WEB_SERVER_IP服务器上的tomcat服务启动不成功!!!"|tee -a $LOG/zzb-$DATE.log
+				continue
+			fi
+		else
+			echo "$WEB_SERVER_IP服务器上的数据更新不成功!!!"|tee -a $LOG/zzb-$DATE.log
+			continue
+		fi
+	 else
+		echo "$WEB_SERVER_IP服务器上的目录创建不成功!!!"|tee -a $LOG/zzb-$DATE.log
+		continue
+	 fi
+done
+}
+
+UPDATE_ATM()
+{
+cat $CONF/atm.conf | while read line
+do
+        WEB_SERVER_IP=`echo $line|awk -F: '{print $1}'`
+        WEB_DIR=`echo $line|awk -F: '{print $2}'`
+
+        #创建目录
+         expect -c "
+                spawn /usr/bin/ssh -o StrictHostKeyChecking=no -i $PRIVATE_KEY $SSH_USER@$WEB_SERVER_IP
+                set timeout -1
+                expect \"\*Enter passphrase\*:\"
+                send \"$SSH_PASSWORD\r\"
+                expect \"\*]*\"
+                send \"sudo mkdir $WEB_DIR$DATE\r\"
+                expect \"\*]*\"
+                send \"sudo cp -apf $WEB_DIR/* $WEB_DIR$DATE\r\"
+                expect \"\*]*\"
+                send \"exit\r\"
+                expect eof
+                "
+         rev_md=`echo $?`
+         if [[ $rev_md -eq 0 ]];then
+        #更新WEB数据
+                        expect -c "
+                        spawn /usr/bin/ssh -o StrictHostKeyChecking=no -i $PRIVATE_KEY $SSH_USER@$WEB_SERVER_IP
+                        set timeout -1
+                        expect \"\*Enter passphrase\*:\"
+                        send \"$SSH_PASSWORD\r\"
+                        expect \"\*]*\"
+                        send \"sudo /usr/bin/rsync -av --delete --exclude=*/.svn --exclude=*/classes/ldap_config.properties --exclude=*/WEB-INF/web.xml --exclude=*/classes/jdbc* --exclude=*/classes/log4j.properties rsync://$RSYNC_SERVER/$RSYNC_SHARE_ATM_DIR $WEB_DIR$DATE\r\"
+                        expect \"\*]*\"
+                        send \"exit\r\"
+                        expect eof
+                        "
+                rev_rsync=`echo $?`
+                if [[ $rev_rsync -eq 0 ]];then
+                #启动resin服务
+                        expect -c "
+                                spawn /usr/bin/ssh -o StrictHostKeyChecking=no -i $PRIVATE_KEY $SSH_USER@$WEB_SERVER_IP
+                                set timeout -1
+                                expect \"\*Enter passphrase\*:\"
+                                send \"$SSH_PASSWORD\r\"
+                                expect \"\*]*\"
+                                send \"sudo /etc/init.d/tomcat stop\r\"
+                                expect \"\*]*\"
+                                send \"cd /data/www\r\"
+                                expect \"\*]*\"
+                                send \"sudo unlink html\r\"
+                                expect \"\*]*\"
+                                send \"sudo ln -s html$DATE html\r\"
+                                expect \"\*]*\"
+                                send \"sudo chown www.www -R *\r\"
+                             expect \"\*]*\"
+                                send \"sudo /etc/init.d/tomcat start\r\"
+                                expect \"\*]*\"
+                                send \"exit\r\"
+                                expect eof
+                                "
+                        rev_start=`echo $?`
+                        if [[ $rev_start -eq 0 ]];then
+                                echo "$WEB_SERVER_IP服务器上的WEB更新完成."|tee -a $LOG/atm-$DATE.log
+                        else
+                                echo "$WEB_SERVER_IP服务器上的tomcat服务启动不成功!!!"|tee -a $LOG/atm-$DATE.log
+                                continue
+                        fi
+                else
+                        echo "$WEB_SERVER_IP服务器上的数据更新不成功!!!"|tee -a $LOG/atm-$DATE.log
+                        continue
+                fi
+         else
+                echo "$WEB_SERVER_IP服务器上的数据复制不成功!!!"|tee -a $LOG/atm-$DATE.log
+                continue
+         fi
+done
+}
+
+UPDATE_CIPM()
+{
+cat $CONF/cipm.conf | while read line
+do
+        WEB_SERVER_IP=`echo $line|awk -F: '{print $1}'`
+        WEB_DIR=`echo $line|awk -F: '{print $2}'`
+
+        #创建目录
+         expect -c "
+                spawn /usr/bin/ssh -o StrictHostKeyChecking=no -i $PRIVATE_KEY $SSH_USER@$WEB_SERVER_IP
+                set timeout -1
+                expect \"\*Enter passphrase\*:\"
+                send \"$SSH_PASSWORD\r\"
+                expect \"\*]*\"
+                send \"sudo mkdir $WEB_DIR$DATE\r\"
+                expect \"\*]*\"
+                send \"sudo cp -apf $WEB_DIR/* $WEB_DIR$DATE\r\"
+                expect \"\*]*\"
+                send \"exit\r\"
+                expect eof
+                "
+         rev_md=`echo $?`
+         if [[ $rev_md -eq 0 ]];then
+        #更新WEB数据
+                        expect -c "
+                        spawn /usr/bin/ssh -o StrictHostKeyChecking=no -i $PRIVATE_KEY $SSH_USER@$WEB_SERVER_IP
+                        set timeout -1
+                        expect \"\*Enter passphrase\*:\"
+                        send \"$SSH_PASSWORD\r\"
+                        expect \"\*]*\"
+                        send \"sudo /usr/bin/rsync -av --delete --exclude=*/.svn --exclude=*/classes/datasource.properties rsync://$RSYNC_SERVER/$RSYNC_SHARE_CIPM_DIR $WEB_DIR$DATE\r\"
+                        expect \"\*]*\"
+                        send \"exit\r\"
+                        expect eof
+                        "
+                rev_rsync=`echo $?`
+                if [[ $rev_rsync -eq 0 ]];then
+                #启动resin服务
+                        expect -c "
+                                spawn /usr/bin/ssh -o StrictHostKeyChecking=no -i $PRIVATE_KEY $SSH_USER@$WEB_SERVER_IP
+                                set timeout -1
+                                expect \"\*Enter passphrase\*:\"
+                                send \"$SSH_PASSWORD\r\"
+                                expect \"\*]*\"
+                                send \"sudo /etc/init.d/resin1 stop\r\"
+                                expect \"\*]*\"
+                                send \"cd /data/www\r\"
+                                expect \"\*]*\"
+                                send \"sudo unlink html1\r\"
+                                expect \"\*]*\"
+                                send \"sudo ln -s html$DATE html1\r\"
+                                expect \"\*]*\"
+                                send \"sudo chown www.www -R *\r\"
+                             expect \"\*]*\"
+                                send \"sudo /etc/init.d/resin1 start\r\"
+                                expect \"\*]*\"
+                                send \"exit\r\"
+                                expect eof
+                                "
+                        rev_start=`echo $?`
+                        if [[ $rev_start -eq 0 ]];then
+                                echo "$WEB_SERVER_IP服务器上的WEB更新完成."|tee -a $LOG/cipm-$DATE.log
+                        else
+                                echo "$WEB_SERVER_IP服务器上的tomcat服务启动不成功!!!"|tee -a $LOG/cipm-$DATE.log
+                                continue
+                        fi
+                else
+                        echo "$WEB_SERVER_IP服务器上的数据更新不成功!!!"|tee -a $LOG/cipm-$DATE.log
+                        continue
+                fi
+         else
+                echo "$WEB_SERVER_IP服务器上的数据复制不成功!!!"|tee -a $LOG/cipm-$DATE.log
+                continue
+         fi
+done
+}
+
+UPDATE_CM()
+{
+cat $CONF/cm.conf | while read line
+do
+        WEB_SERVER_IP=`echo $line|awk -F: '{print $1}'`
+        WEB_DIR=`echo $line|awk -F: '{print $2}'`
+
+        #创建目录
+         expect -c "
+                spawn /usr/bin/ssh -o StrictHostKeyChecking=no -i $PRIVATE_KEY $SSH_USER@$WEB_SERVER_IP
+                set timeout -1
+                expect \"\*Enter passphrase\*:\"
+                send \"$SSH_PASSWORD\r\"
+                expect \"\*]*\"
+                send \"sudo mkdir $WEB_DIR$DATE\r\"
+                expect \"\*]*\"
+                send \"sudo cp -apf $WEB_DIR/* $WEB_DIR$DATE\r\"
+                expect \"\*]*\"
+                send \"exit\r\"
+                expect eof
+                "
+         rev_md=`echo $?`
+         if [[ $rev_md -eq 0 ]];then
+        #更新WEB数据
+                        expect -c "
+                        spawn /usr/bin/ssh -o StrictHostKeyChecking=no -i $PRIVATE_KEY $SSH_USER@$WEB_SERVER_IP
+                        set timeout -1
+                        expect \"\*Enter passphrase\*:\"
+                        send \"$SSH_PASSWORD\r\"
+                        expect \"\*]*\"
+                        send \"sudo /usr/bin/rsync -av --delete --exclude=*/.svn --exclude=*/classes/datasource.properties --exclude=*/classes/navigations.properties --exclude=*/classes/quote.properties --exclude=*/classes/casconfig.properties --exclude=*/classes/insure.properties --exclude=*/classes/callCenterConfig.properties --exclude=*/classes/jiraConnectorConfig.properties rsync://$RSYNC_SERVER/$RSYNC_SHARE_CM_DIR $WEB_DIR$DATE\r\"
+                        expect \"\*]*\"
+                        send \"exit\r\"
+                        expect eof
+                        "
+                rev_rsync=`echo $?`
+                if [[ $rev_rsync -eq 0 ]];then
+                #启动resin服务
+                        expect -c "
+                                spawn /usr/bin/ssh -o StrictHostKeyChecking=no -i $PRIVATE_KEY $SSH_USER@$WEB_SERVER_IP
+                                set timeout -1
+                                expect \"\*Enter passphrase\*:\"
+                                send \"$SSH_PASSWORD\r\"
+                                expect \"\*]*\"
+                                send \"sudo /etc/init.d/resin stop\r\"
+                                expect \"\*]*\"
+                                send \"cd /data/www\r\"
+                                expect \"\*]*\"
+                                send \"sudo unlink html\r\"
+                                expect \"\*]*\"
+                                send \"sudo ln -s html$DATE html\r\"
+                                expect \"\*]*\"
+                                send \"sudo chown www.www -R *\r\"
+                                expect \"\*]*\"
+                                send \"sudo /etc/init.d/resin start\r\"
+                                expect \"\*]*\"
+                                send \"exit\r\"
+                                expect eof
+                                "
+                        rev_start=`echo $?`
+                        if [[ $rev_start -eq 0 ]];then
+                                echo "$WEB_SERVER_IP服务器上的WEB更新完成."|tee -a $LOG/cm-$DATE.log
+                        else
+                                echo "$WEB_SERVER_IP服务器上的resin服务启动不成功!!!"|tee -a $LOG/cm-$DATE.log
+                                continue
+                        fi
+                else
+                        echo "$WEB_SERVER_IP服务器上的数据更新不成功!!!"|tee -a $LOG/cm-$DATE.log
+                        continue
+                fi
+         else
+                echo "$WEB_SERVER_IP服务器上的数据复制不成功!!!"|tee -a $LOG/cm-$DATE.log
+                continue
+         fi
+done
+}
+
+UPDATE_CX()
+{
+cat $CONF/cx.conf | while read line
+do
+        WEB_SERVER_IP=`echo $line|awk -F: '{print $1}'`
+        WEB_DIR=`echo $line|awk -F: '{print $2}'`
+
+        #创建目录
+         expect -c "
+                spawn /usr/bin/ssh -o StrictHostKeyChecking=no -i $PRIVATE_KEY $SSH_USER@$WEB_SERVER_IP
+                set timeout -1
+                expect \"\*Enter passphrase\*:\"
+                send \"$SSH_PASSWORD\r\"
+                expect \"\*]*\"
+                send \"sudo mkdir $WEB_DIR$DATE\r\"
+                expect \"\*]*\"
+                send \"sudo cp -apf $WEB_DIR/* $WEB_DIR$DATE\r\"
+                expect \"\*]*\"
+                send \"exit\r\"
+                expect eof
+                "
+         rev_md=`echo $?`
+         if [[ $rev_md -eq 0 ]];then
+        #更新WEB数据
+                        expect -c "
+                        spawn /usr/bin/ssh -o StrictHostKeyChecking=no -i $PRIVATE_KEY $SSH_USER@$WEB_SERVER_IP
+                        set timeout -1
+                        expect \"\*Enter passphrase\*:\"
+                        send \"$SSH_PASSWORD\r\"
+                        expect \"\*]*\"
+                        send \"sudo /usr/bin/rsync -av --delete --exclude=*/.svn --exclude=*/classes/datasource.properties rsync://$RSYNC_SERVER/$RSYNC_SHARE_CX_DIR $WEB_DIR$DATE\r\"
+                        expect \"\*]*\"
+                        send \"exit\r\"
+                        expect eof
+                        "
+                rev_rsync=`echo $?`
+                if [[ $rev_rsync -eq 0 ]];then
+                #启动resin服务
+                        expect -c "
+                                spawn /usr/bin/ssh -o StrictHostKeyChecking=no -i $PRIVATE_KEY $SSH_USER@$WEB_SERVER_IP
+                                set timeout -1
+                                expect \"\*Enter passphrase\*:\"
+                                send \"$SSH_PASSWORD\r\"
+                                expect \"\*]*\"
+                                send \"sudo /etc/init.d/resin stop\r\"
+                                expect \"\*]*\"
+                                send \"cd /data/www\r\"
+                                expect \"\*]*\"
+                                send \"sudo unlink html\r\"
+                                expect \"\*]*\"
+                                send \"sudo ln -s html$DATE html\r\"
+                                expect \"\*]*\"
+                                send \"sudo chown www.www -R *\r\"
+                                expect \"\*]*\"
+                                send \"sudo /etc/init.d/resin start\r\"
+                                expect \"\*]*\"
+                                send \"exit\r\"
+                                expect eof
+                                "
+                        rev_start=`echo $?`
+                        if [[ $rev_start -eq 0 ]];then
+                                echo "$WEB_SERVER_IP服务器上的WEB更新完成."|tee -a $LOG/cx-$DATE.log
+                        else
+                                echo "$WEB_SERVER_IP服务器上的resin服务启动不成功!!!"|tee -a $LOG/cx-$DATE.log
+                                continue
+                        fi
+                else
+                        echo "$WEB_SERVER_IP服务器上的数据更新不成功!!!"|tee -a $LOG/cx-$DATE.log
+                        continue
+                fi
+         else
+                echo "$WEB_SERVER_IP服务器上的数据复制不成功!!!"|tee -a $LOG/cx-$DATE.log
+                continue
+         fi
+done
+}
+
+UPDATE_GO2()
+{
+cat $CONF/go2.conf | while read line
+do
+        WEB_SERVER_IP=`echo $line|awk -F: '{print $1}'`
+        WEB_DIR=`echo $line|awk -F: '{print $2}'`
+
+        #创建目录
+         expect -c "
+                spawn /usr/bin/ssh -o StrictHostKeyChecking=no -i $PRIVATE_KEY $SSH_USER@$WEB_SERVER_IP
+                set timeout -1
+                expect \"\*Enter passphrase\*:\"
+                send \"$SSH_PASSWORD\r\"
+                expect \"\*]*\"
+                send \"sudo mkdir $WEB_DIR$DATE\r\"
+                expect \"\*]*\"
+                send \"sudo cp -apf $WEB_DIR/* $WEB_DIR$DATE\r\"
+                expect \"\*]*\"
+                send \"exit\r\"
+                expect eof
+                "
+         rev_md=`echo $?`
+         if [[ $rev_md -eq 0 ]];then
+        #更新WEB数据
+                        expect -c "
+                        spawn /usr/bin/ssh -o StrictHostKeyChecking=no -i $PRIVATE_KEY $SSH_USER@$WEB_SERVER_IP
+                        set timeout -1
+                        expect \"\*Enter passphrase\*:\"
+                        send \"$SSH_PASSWORD\r\"
+                        expect \"\*]*\"
+                        send \"sudo /usr/bin/rsync -av --delete --exclude=*/.svn --exclude=*/classes/datasource.properties --exclude=*/WEB-INF/web.xml --exclude=*/WEB-INF/spring/* rsync://$RSYNC_SERVER/$RSYNC_SHARE_GO2_DIR $WEB_DIR$DATE\r\"
+                        expect \"\*]*\"
+                        send \"exit\r\"
+                        expect eof
+                        "
+                rev_rsync=`echo $?`
+                if [[ $rev_rsync -eq 0 ]];then
+                #启动resin服务
+                        expect -c "
+                                spawn /usr/bin/ssh -o StrictHostKeyChecking=no -i $PRIVATE_KEY $SSH_USER@$WEB_SERVER_IP
+                                set timeout -1
+                                expect \"\*Enter passphrase\*:\"
+                                send \"$SSH_PASSWORD\r\"
+                                expect \"\*]*\"
+                                send \"sudo /etc/init.d/resin stop\r\"
+                                expect \"\*]*\"
+                                send \"cd /data/www\r\"
+                                expect \"\*]*\"
+                                send \"sudo unlink html\r\"
+                                expect \"\*]*\"
+                                send \"sudo ln -s html$DATE html\r\"
+                                expect \"\*]*\"
+                                send \"sudo chown www.www -R *\r\"
+                                expect \"\*]*\"
+                                send \"sudo /etc/init.d/resin start\r\"
+                                expect \"\*]*\"
+                                send \"exit\r\"
+                                expect eof
+                                "
+                        rev_start=`echo $?`
+                        if [[ $rev_start -eq 0 ]];then
+                                echo "$WEB_SERVER_IP服务器上的WEB更新完成."|tee -a $LOG/go2-$DATE.log
+                        else
+                                echo "$WEB_SERVER_IP服务器上的resin服务启动不成功!!!"|tee -a $LOG/go2-$DATE.log
+                                continue
+                        fi
+                else
+                        echo "$WEB_SERVER_IP服务器上的数据更新不成功!!!"|tee -a $LOG/go2-$DATE.log
+                        continue
+                fi
+         else
+                echo "$WEB_SERVER_IP服务器上的数据复制不成功!!!"|tee -a $LOG/go2-$DATE.log
+                continue
+         fi
+done
+}
+
+UPDATE_ORDER()
+{
+cat $CONF/order.conf | while read line
+do
+        WEB_SERVER_IP=`echo $line|awk -F: '{print $1}'`
+        WEB_DIR=`echo $line|awk -F: '{print $2}'`
+
+        #创建目录
+         expect -c "
+                spawn /usr/bin/ssh -o StrictHostKeyChecking=no -i $PRIVATE_KEY $SSH_USER@$WEB_SERVER_IP
+                set timeout -1
+                expect \"\*Enter passphrase\*:\"
+                send \"$SSH_PASSWORD\r\"
+                expect \"\*]*\"
+                send \"sudo mkdir $WEB_DIR$DATE\r\"
+                expect \"\*]*\"
+                send \"sudo cp -apf $WEB_DIR/* $WEB_DIR$DATE\r\"
+                expect \"\*]*\"
+                send \"exit\r\"
+                expect eof
+                "
+         rev_md=`echo $?`
+         if [[ $rev_md -eq 0 ]];then
+        #更新WEB数据
+                        expect -c "
+                        spawn /usr/bin/ssh -o StrictHostKeyChecking=no -i $PRIVATE_KEY $SSH_USER@$WEB_SERVER_IP
+                        set timeout -1
+                        expect \"\*Enter passphrase\*:\"
+                        send \"$SSH_PASSWORD\r\"
+                        expect \"\*]*\"
+                        send \"sudo /usr/bin/rsync -av --delete --exclude=*/.svn --exclude=*/config/datasource.properties --exclude=*/config/log4j.xml --exclude=*/config/config.properties rsync://$RSYNC_SERVER/$RSYNC_SHARE_ORDER_DIR $WEB_DIR$DATE\r\"
+                        expect \"\*]*\"
+                        send \"exit\r\"
+                        expect eof
+                        "
+                rev_rsync=`echo $?`
+                if [[ $rev_rsync -eq 0 ]];then
+                #启动resin服务
+                        expect -c "
+                                spawn /usr/bin/ssh -o StrictHostKeyChecking=no -i $PRIVATE_KEY $SSH_USER@$WEB_SERVER_IP
+                                set timeout -1
+                                expect \"\*Enter passphrase\*:\"
+                                send \"$SSH_PASSWORD\r\"
+                                expect \"\*]*\"
+                                send \"sudo /data/www/apps/order-service-server stop\r\"
+                                expect \"\*]*\"
+                                send \"cd /data/www/apps\r\"
+                                expect \"\*]*\"
+                                send \"sudo unlink order-service-server\r\"
+                                expect \"\*]*\"
+                                send \"sudo ln -s $WEB_DIR$DATE order-service-server\r\"
+                                expect \"\*]*\"
+                                send \"sudo chown www.www -R *\r\"
+                                expect \"\*]*\"
+                                send \"sudo /data/www/apps/order-service-server start\r\"
+                                expect \"\*]*\"
+                                send \"exit\r\"
+                                expect eof
+                                "
+                        rev_start=`echo $?`
+                        if [[ $rev_start -eq 0 ]];then
+                                echo "$WEB_SERVER_IP服务器上的WEB更新完成."|tee -a $LOG/order-$DATE.log
+                        else
+                                echo "$WEB_SERVER_IP服务器上的resin服务启动不成功!!!"|tee -a $LOG/order-$DATE.log
+                                continue
+                        fi
+                else
+                        echo "$WEB_SERVER_IP服务器上的数据更新不成功!!!"|tee -a $LOG/order-$DATE.log
+                        continue
+                fi
+         else
+                echo "$WEB_SERVER_IP服务器上的数据复制不成功!!!"|tee -a $LOG/order-$DATE.log
+                continue
+         fi
+done
+}
+
+UPDATE_BUSINESSPROCESS_ALLTRUST_NET()
+{
+cat $CONF/businessprocess_alltrustnet.conf | while read line
+do
+        WEB_SERVER_IP=`echo $line|awk -F: '{print $1}'`
+        WEB_DIR=`echo $line|awk -F: '{print $2}'`
+
+        #创建目录
+         expect -c "
+                spawn /usr/bin/ssh -o StrictHostKeyChecking=no -i $PRIVATE_KEY $SSH_USER@$WEB_SERVER_IP
+                set timeout -1
+                expect \"\*Enter passphrase\*:\"
+                send \"$SSH_PASSWORD\r\"
+                expect \"\*]*\"
+                send \"sudo mkdir $WEB_DIR$DATE\r\"
+                expect \"\*]*\"
+                send \"sudo cp -apf $WEB_DIR/* $WEB_DIR$DATE\r\"
+                expect \"\*]*\"
+                send \"exit\r\"
+                expect eof
+                "
+         rev_md=`echo $?`
+         if [[ $rev_md -eq 0 ]];then
+        #更新WEB数据
+                        expect -c "
+                        spawn /usr/bin/ssh -o StrictHostKeyChecking=no -i $PRIVATE_KEY $SSH_USER@$WEB_SERVER_IP
+                        set timeout -1
+                        expect \"\*Enter passphrase\*:\"
+                        send \"$SSH_PASSWORD\r\"
+                        expect \"\*]*\"
+                        send \"sudo /usr/bin/rsync -av --delete --exclude=*/.svn --exclude=*/applicationContext_itf_gorm.xml --exclude=*/applicationContext_itf.xml --exclude=*/itf_config.gdsl --exclude=*/processor.properties   rsync://$RSYNC_SERVER/$RSYNC_SHARE_BUSINESSPROCESS_ALLTRUST_NET_DIR $WEB_DIR$DATE\r\"
+                        expect \"\*]*\"
+                        send \"exit\r\"
+                        expect eof
+                        "
+                rev_rsync=`echo $?`
+                if [[ $rev_rsync -eq 0 ]];then
+                #启动resin服务
+                        expect -c "
+                                spawn /usr/bin/ssh -o StrictHostKeyChecking=no -i $PRIVATE_KEY $SSH_USER@$WEB_SERVER_IP
+                                set timeout -1
+                                expect \"\*Enter passphrase\*:\"
+                                send \"$SSH_PASSWORD\r\"
+                                expect \"\*]*\"
+                                send \"sudo /data/www/itf/processor/alltrust/b2bNetVehicle/startup.sh stop\r\"
+                                expect \"\*]*\"
+                                send \"cd /data/www/itf/processor/alltrust/\r\"
+                                expect \"\*]*\"
+                                send \"sudo unlink b2bNetVehicle\r\"
+                                expect \"\*]*\"
+                                send \"sudo ln -s $WEB_DIR$DATE b2bNetVehicle\r\"
+                                expect \"\*]*\"
+                                send \"sudo chown www.www -R *\r\"
+                                expect \"\*]*\"
+                                send \"sudo /data/www/itf/processor/alltrust/b2bNetVehicle/startup.sh start\r\"
+                                expect \"\*]*\"
+                                send \"exit\r\"
+                                expect eof
+                                "
+                        rev_start=`echo $?`
+                        if [[ $rev_start -eq 0 ]];then
+                                echo "$WEB_SERVER_IP服务器上的WEB更新完成."|tee -a $LOG/alltrust_net-$DATE.log
+                        else
+                                echo "$WEB_SERVER_IP服务器上的resin服务启动不成功!!!"|tee -a $LOG/alltrust_net-$DATE.log
+                                continue
+                        fi
+                else
+                        echo "$WEB_SERVER_IP服务器上的数据更新不成功!!!"|tee -a $LOG/alltrust_net-$DATE.log
+                        continue
+                fi
+         else
+                echo "$WEB_SERVER_IP服务器上的数据复制不成功!!!"|tee -a $LOG/alltrust_net-$DATE.log
+                continue
+         fi
+done
+}
+
+UPDATE_BUSINESSPROCESS_ALLTRUST_TRADITION()
+{
+cat $CONF/businessprocess_alltrusttradition.conf | while read line
+do
+        WEB_SERVER_IP=`echo $line|awk -F: '{print $1}'`
+        WEB_DIR=`echo $line|awk -F: '{print $2}'`
+
+        #创建目录
+         expect -c "
+                spawn /usr/bin/ssh -o StrictHostKeyChecking=no -i $PRIVATE_KEY $SSH_USER@$WEB_SERVER_IP
+                set timeout -1
+                expect \"\*Enter passphrase\*:\"
+                send \"$SSH_PASSWORD\r\"
+                expect \"\*]*\"
+                send \"sudo mkdir $WEB_DIR$DATE\r\"
+                expect \"\*]*\"
+                send \"sudo cp -apf $WEB_DIR/* $WEB_DIR$DATE\r\"
+                expect \"\*]*\"
+                send \"exit\r\"
+                expect eof
+                "
+         rev_md=`echo $?`
+         if [[ $rev_md -eq 0 ]];then
+        #更新WEB数据
+                        expect -c "
+                        spawn /usr/bin/ssh -o StrictHostKeyChecking=no -i $PRIVATE_KEY $SSH_USER@$WEB_SERVER_IP
+                        set timeout -1
+                        expect \"\*Enter passphrase\*:\"
+                        send \"$SSH_PASSWORD\r\"
+                        expect \"\*]*\"
+                        send \"sudo /usr/bin/rsync -av --delete --exclude=*/.svn --exclude=*/applicationContext_itf_gorm.xml --exclude=*/applicationContext_itf.xml --exclude=*/itf_config.gdsl --exclude=*/processor.properties  rsync://$RSYNC_SERVER/$RSYNC_SHARE_BUSINESSPROCESS_ALLTRUST_TRADITION_DIR $WEB_DIR$DATE\r\"
+                        expect \"\*]*\"
+                        send \"exit\r\"
+                        expect eof
+                        "
+                rev_rsync=`echo $?`
+                if [[ $rev_rsync -eq 0 ]];then
+                #启动resin服务
+                        expect -c "
+                                spawn /usr/bin/ssh -o StrictHostKeyChecking=no -i $PRIVATE_KEY $SSH_USER@$WEB_SERVER_IP
+                                set timeout -1
+                                expect \"\*Enter passphrase\*:\"
+                                send \"$SSH_PASSWORD\r\"
+                                expect \"\*]*\"
+                                send \"sudo /data/www/itf/processor/alltrust/b2bTraditionVehicle/startup.sh stop\r\"
+                                expect \"\*]*\"
+                                send \"cd /data/www/itf/processor/alltrust/\r\"
+                                expect \"\*]*\"
+                                send \"sudo unlink b2bTraditionVehicle\r\"
+                                expect \"\*]*\"
+                                send \"sudo ln -s $WEB_DIR$DATE b2bTraditionVehicle\r\"
+                                expect \"\*]*\"
+                                send \"sudo chown www.www -R *\r\"
+                                expect \"\*]*\"
+                                send \"sudo /data/www/itf/processor/alltrust/b2bTraditionVehicle/startup.sh start\r\"
+                                expect \"\*]*\"
+                                send \"exit\r\"
+                                expect eof
+                                "
+                        rev_start=`echo $?`
+                        if [[ $rev_start -eq 0 ]];then
+                                echo "$WEB_SERVER_IP服务器上的WEB更新完成."|tee -a $LOG/alltrust_tradition-$DATE.log
+                        else
+                                echo "$WEB_SERVER_IP服务器上的resin服务启动不成功!!!"|tee -a $LOG/alltrust_tradition-$DATE.log
+                                continue
+                        fi
+                else
+                        echo "$WEB_SERVER_IP服务器上的数据更新不成功!!!"|tee -a $LOG/alltrust_tradition-$DATE.log
+                        continue
+                fi
+         else
+                echo "$WEB_SERVER_IP服务器上的数据复制不成功!!!"|tee -a $LOG/alltrust_tradition-$DATE.log
+                continue
+         fi
+done
+}
+
+UPDATE_BUSINESSPROCESS_BPIC_NET()
+{
+cat $CONF/businessprocess_bpicnet.conf | while read line
+do
+        WEB_SERVER_IP=`echo $line|awk -F: '{print $1}'`
+        WEB_DIR=`echo $line|awk -F: '{print $2}'`
+
+        #创建目录
+         expect -c "
+                spawn /usr/bin/ssh -o StrictHostKeyChecking=no -i $PRIVATE_KEY $SSH_USER@$WEB_SERVER_IP
+                set timeout -1
+                expect \"\*Enter passphrase\*:\"
+                send \"$SSH_PASSWORD\r\"
+                expect \"\*]*\"
+                send \"sudo mkdir $WEB_DIR$DATE\r\"
+                expect \"\*]*\"
+                send \"sudo cp -apf $WEB_DIR/* $WEB_DIR$DATE\r\"
+                expect \"\*]*\"
+                send \"exit\r\"
+                expect eof
+                "
+         rev_md=`echo $?`
+         if [[ $rev_md -eq 0 ]];then
+        #更新WEB数据
+                        expect -c "
+                        spawn /usr/bin/ssh -o StrictHostKeyChecking=no -i $PRIVATE_KEY $SSH_USER@$WEB_SERVER_IP
+                        set timeout -1
+                        expect \"\*Enter passphrase\*:\"
+                        send \"$SSH_PASSWORD\r\"
+                        expect \"\*]*\"
+                        send \"sudo /usr/bin/rsync -av --delete --exclude=*/.svn --exclude=*/applicationContext_itf_gorm.xml --exclude=*/applicationContext_itf.xml --exclude=*/itf_config.gdsl --exclude=*/processor.properties  rsync://$RSYNC_SERVER/$RSYNC_SHARE_BUSINESSPROCESS_BPIC_NET_DIR $WEB_DIR$DATE\r\"
+                        expect \"\*]*\"
+                        send \"exit\r\"
+                        expect eof
+                        "
+                rev_rsync=`echo $?`
+                if [[ $rev_rsync -eq 0 ]];then
+                #启动resin服务
+                        expect -c "
+                                spawn /usr/bin/ssh -o StrictHostKeyChecking=no -i $PRIVATE_KEY $SSH_USER@$WEB_SERVER_IP
+                                set timeout -1
+                                expect \"\*Enter passphrase\*:\"
+                                send \"$SSH_PASSWORD\r\"
+                                expect \"\*]*\"
+                                send \"sudo /data/www/itf/processor/bpic/b2bNetVehicle/startup.sh stop\r\"
+                                expect \"\*]*\"
+                                send \"cd /data/www/itf/processor/bpic/\r\"
+                                expect \"\*]*\"
+                                send \"sudo unlink b2bNetVehicle\r\"
+                                expect \"\*]*\"
+                                send \"sudo ln -s $WEB_DIR$DATE b2bNetVehicle\r\"
+                                expect \"\*]*\"
+                                send \"sudo chown www.www -R *\r\"
+                                expect \"\*]*\"
+                                send \"sudo /data/www/itf/processor/bpic/b2bNetVehicle/startup.sh start\r\"
+                                expect \"\*]*\"
+                                send \"exit\r\"
+                                expect eof
+                                "
+                        rev_start=`echo $?`
+                        if [[ $rev_start -eq 0 ]];then
+                                echo "$WEB_SERVER_IP服务器上的WEB更新完成."|tee -a $LOG/bpic_net-$DATE.log
+                        else
+                                echo "$WEB_SERVER_IP服务器上的resin服务启动不成功!!!"|tee -a $LOG/bpic_net-$DATE.log
+                                continue
+                        fi
+                else
+                        echo "$WEB_SERVER_IP服务器上的数据更新不成功!!!"|tee -a $LOG/bpic_net-$DATE.log
+                        continue
+                fi
+         else
+                echo "$WEB_SERVER_IP服务器上的数据复制不成功!!!"|tee -a $LOG/bpic_net-$DATE.log
+                continue
+         fi
+done
+}
+
+UPDATE_BUSINESSPROCESS_CPIC_NET()
+{
+cat $CONF/businessprocess_cpicnet.conf | while read line
+do
+        WEB_SERVER_IP=`echo $line|awk -F: '{print $1}'`
+        WEB_DIR=`echo $line|awk -F: '{print $2}'`
+
+        #创建目录
+         expect -c "
+                spawn /usr/bin/ssh -o StrictHostKeyChecking=no -i $PRIVATE_KEY $SSH_USER@$WEB_SERVER_IP
+                set timeout -1
+                expect \"\*Enter passphrase\*:\"
+                send \"$SSH_PASSWORD\r\"
+                expect \"\*]*\"
+                send \"sudo mkdir $WEB_DIR$DATE\r\"
+                expect \"\*]*\"
+                send \"sudo cp -apf $WEB_DIR/* $WEB_DIR$DATE\r\"
+                expect \"\*]*\"
+                send \"exit\r\"
+                expect eof
+                "
+         rev_md=`echo $?`
+         if [[ $rev_md -eq 0 ]];then
+        #更新WEB数据
+                        expect -c "
+                        spawn /usr/bin/ssh -o StrictHostKeyChecking=no -i $PRIVATE_KEY $SSH_USER@$WEB_SERVER_IP
+                        set timeout -1
+                        expect \"\*Enter passphrase\*:\"
+                        send \"$SSH_PASSWORD\r\"
+                        expect \"\*]*\"
+                        send \"sudo /usr/bin/rsync -av --delete --exclude=*/.svn --exclude=*/applicationContext_itf_gorm.xml --exclude=*/applicationContext_itf.xml --exclude=*/itf_config.gdsl --exclude=*/processor.properties --exclude=*/applicationContext-cacheManager.xml --exclude=*/ehcache-task.xml --exclude=*/task-inscar-manager.properties --exclude=*/terracotta-license.key rsync://$RSYNC_SERVER/$RSYNC_SHARE_BUSINESSPROCESS_CPIC_NET_DIR $WEB_DIR$DATE\r\"
+                        expect \"\*]*\"
+                        send \"exit\r\"
+                        expect eof
+                        "
+                rev_rsync=`echo $?`
+                if [[ $rev_rsync -eq 0 ]];then
+                #启动resin服务
+                        expect -c "
+                                spawn /usr/bin/ssh -o StrictHostKeyChecking=no -i $PRIVATE_KEY $SSH_USER@$WEB_SERVER_IP
+                                set timeout -1
+                                expect \"\*Enter passphrase\*:\"
+                                send \"$SSH_PASSWORD\r\"
+                                expect \"\*]*\"
+                                send \"sudo /data/www/itf/processor/cpic/b2bNetVehicle/startup.sh stop\r\"
+                                expect \"\*]*\"
+                                send \"cd /data/www/itf/processor/cpic/\r\"
+                                expect \"\*]*\"
+                                send \"sudo unlink b2bNetVehicle\r\"
+                                expect \"\*]*\"
+                                send \"sudo ln -s $WEB_DIR$DATE b2bNetVehicle\r\"
+                                expect \"\*]*\"
+                                send \"sudo chown www.www -R *\r\"
+                                expect \"\*]*\"
+                                send \"sudo /data/www/itf/processor/cpic/b2bNetVehicle/startup.sh start\r\"
+                                expect \"\*]*\"
+                                send \"exit\r\"
+                                expect eof
+                                "
+                        rev_start=`echo $?`
+                        if [[ $rev_start -eq 0 ]];then
+                                echo "$WEB_SERVER_IP服务器上的WEB更新完成."|tee -a $LOG/cpic_net-$DATE.log
+                        else
+                                echo "$WEB_SERVER_IP服务器上的resin服务启动不成功!!!"|tee -a $LOG/cpic_net-$DATE.log
+                                continue
+                        fi
+                else
+                        echo "$WEB_SERVER_IP服务器上的数据更新不成功!!!"|tee -a $LOG/cpic_net-$DATE.log
+                        continue
+                fi
+         else
+                echo "$WEB_SERVER_IP服务器上的数据复制不成功!!!"|tee -a $LOG/cpic_net-$DATE.log
+                continue
+         fi
+done
+}
+
+UPDATE_BUSINESSPROCESS_SINOSAFE_TRADITION()
+{
+cat $CONF/businessprocess_sinosafetradition.conf | while read line
+do
+        WEB_SERVER_IP=`echo $line|awk -F: '{print $1}'`
+        WEB_DIR=`echo $line|awk -F: '{print $2}'`
+
+        #创建目录
+         expect -c "
+                spawn /usr/bin/ssh -o StrictHostKeyChecking=no -i $PRIVATE_KEY $SSH_USER@$WEB_SERVER_IP
+                set timeout -1
+                expect \"\*Enter passphrase\*:\"
+                send \"$SSH_PASSWORD\r\"
+                expect \"\*]*\"
+                send \"sudo mkdir $WEB_DIR$DATE\r\"
+                expect \"\*]*\"
+                send \"sudo cp -apf $WEB_DIR/* $WEB_DIR$DATE\r\"
+                expect \"\*]*\"
+                send \"exit\r\"
+                expect eof
+                "
+         rev_md=`echo $?`
+         if [[ $rev_md -eq 0 ]];then
+        #更新WEB数据
+                        expect -c "
+                        spawn /usr/bin/ssh -o StrictHostKeyChecking=no -i $PRIVATE_KEY $SSH_USER@$WEB_SERVER_IP
+                        set timeout -1
+                        expect \"\*Enter passphrase\*:\"
+                        send \"$SSH_PASSWORD\r\"
+                        expect \"\*]*\"
+                        send \"sudo /usr/bin/rsync -av --delete --exclude=*/.svn --exclude=*/applicationContext_itf_gorm.xml --exclude=*/applicationContext_itf.xml --exclude=*/itf_config.gdsl --exclude=*/processor.properties  rsync://$RSYNC_SERVER/$RSYNC_SHARE_BUSINESSPROCESS_SINOSAFE_TRADITION_DIR $WEB_DIR$DATE\r\"
+                        expect \"\*]*\"
+                        send \"exit\r\"
+                        expect eof
+                        "
+                rev_rsync=`echo $?`
+                if [[ $rev_rsync -eq 0 ]];then
+                #启动resin服务
+                        expect -c "
+                                spawn /usr/bin/ssh -o StrictHostKeyChecking=no -i $PRIVATE_KEY $SSH_USER@$WEB_SERVER_IP
+                                set timeout -1
+                                expect \"\*Enter passphrase\*:\"
+                                send \"$SSH_PASSWORD\r\"
+                                expect \"\*]*\"
+                                send \"sudo /data/www/itf/processor/sinosafe/b2bTraditionVehicle/startup.sh stop\r\"
+                                expect \"\*]*\"
+                                send \"cd /data/www/itf/processor/sinosafe/\r\"
+                                expect \"\*]*\"
+                                send \"sudo unlink b2bTraditionVehicle\r\"
+                                expect \"\*]*\"
+                                send \"sudo ln -s $WEB_DIR$DATE b2bTraditionVehicle\r\"
+                                expect \"\*]*\"
+                                send \"sudo chown www.www -R *\r\"
+                                expect \"\*]*\"
+                                send \"sudo /data/www/itf/processor/sinosafe/b2bTraditionVehicle/startup.sh start\r\"
+                                expect \"\*]*\"
+                                send \"exit\r\"
+                                expect eof
+                                "
+                        rev_start=`echo $?`
+                        if [[ $rev_start -eq 0 ]];then
+                                echo "$WEB_SERVER_IP服务器上的WEB更新完成."|tee -a $LOG/sinosafe_tradition-$DATE.log
+                        else
+                                echo "$WEB_SERVER_IP服务器上的resin服务启动不成功!!!"|tee -a $LOG/sinosafe_tradition-$DATE.log
+                                continue
+                        fi
+                else
+                        echo "$WEB_SERVER_IP服务器上的数据更新不成功!!!"|tee -a $LOG/sinosafe_tradition-$DATE.log
+                        continue
+                fi
+         else
+                echo "$WEB_SERVER_IP服务器上的数据复制不成功!!!"|tee -a $LOG/sinosafe_tradition-$DATE.log
+                continue
+         fi
+done
+}
+
+UPDATE_BUSINESSPROCESS_SINOSIG_NET()
+{
+cat $CONF/businessprocess_sinosignet.conf | while read line
+do
+        WEB_SERVER_IP=`echo $line|awk -F: '{print $1}'`
+        WEB_DIR=`echo $line|awk -F: '{print $2}'`
+
+        #创建目录
+         expect -c "
+                spawn /usr/bin/ssh -o StrictHostKeyChecking=no -i $PRIVATE_KEY $SSH_USER@$WEB_SERVER_IP
+                set timeout -1
+                expect \"\*Enter passphrase\*:\"
+                send \"$SSH_PASSWORD\r\"
+                expect \"\*]*\"
+                send \"sudo mkdir $WEB_DIR$DATE\r\"
+                expect \"\*]*\"
+                send \"sudo cp -apf $WEB_DIR/* $WEB_DIR$DATE\r\"
+                expect \"\*]*\"
+                send \"exit\r\"
+                expect eof
+                "
+         rev_md=`echo $?`
+         if [[ $rev_md -eq 0 ]];then
+        #更新WEB数据
+                        expect -c "
+                        spawn /usr/bin/ssh -o StrictHostKeyChecking=no -i $PRIVATE_KEY $SSH_USER@$WEB_SERVER_IP
+                        set timeout -1
+                        expect \"\*Enter passphrase\*:\"
+                        send \"$SSH_PASSWORD\r\"
+                        expect \"\*]*\"
+                        send \"sudo /usr/bin/rsync -av --delete --exclude=*/.svn --exclude=*/applicationContext_itf_gorm.xml --exclude=*/applicationContext_itf.xml --exclude=*/itf_config.gdsl --exclude=*/processor.properties --exclude=*/applicationContext-cacheMan
+ager.xml --exclude=*/ehcache-task.xml --exclude=*/task-inscar-manager.properties --exclude=*/terracotta-license.key rsync://$RSYNC_SERVER/$RSYNC_SHARE_BUSINESSPROCESS_SINOSIG_NET_DIR $WEB_DIR$DATE\r\"
+                        expect \"\*]*\"
+                        send \"exit\r\"
+                        expect eof
+                        "
+                rev_rsync=`echo $?`
+                if [[ $rev_rsync -eq 0 ]];then
+                #启动resin服务
+                        expect -c "
+                                spawn /usr/bin/ssh -o StrictHostKeyChecking=no -i $PRIVATE_KEY $SSH_USER@$WEB_SERVER_IP
+                                set timeout -1
+                                expect \"\*Enter passphrase\*:\"
+                                send \"$SSH_PASSWORD\r\"
+                                expect \"\*]*\"
+                                send \"sudo /data/www/itf/processor/sinosig/b2bNetVehicle/startup.sh stop\r\"
+                                expect \"\*]*\"
+                                send \"cd /data/www/itf/processor/sinosig/\r\"
+                                expect \"\*]*\"
+                                send \"sudo unlink b2bNetVehicle\r\"
+                                expect \"\*]*\"
+                                send \"sudo ln -s $WEB_DIR$DATE b2bNetVehicle\r\"
+                                expect \"\*]*\"
+                                send \"sudo chown www.www -R *\r\"
+                                expect \"\*]*\"
+                                send \"sudo /data/www/itf/processor/sinosig/b2bNetVehicle/startup.sh start\r\"
+                                expect \"\*]*\"
+                                send \"exit\r\"
+                                expect eof
+                                "
+                        rev_start=`echo $?`
+                        if [[ $rev_start -eq 0 ]];then
+                                echo "$WEB_SERVER_IP服务器上的WEB更新完成."|tee -a $LOG/sinosig_net-$DATE.log
+                        else
+                                echo "$WEB_SERVER_IP服务器上的resin服务启动不成功!!!"|tee -a $LOG/sinosig_net-$DATE.log
+                                continue
+                        fi
+                else
+                        echo "$WEB_SERVER_IP服务器上的数据更新不成功!!!"|tee -a $LOG/sinosig_net-$DATE.log
+                        continue
+                fi
+         else
+                echo "$WEB_SERVER_IP服务器上的数据复制不成功!!!"|tee -a $LOG/sinosig_net-$DATE.log
+                continue
+         fi
+done
+}
+
+UPDATE_BUSINESSPROCESS_TPAIC_NET()
+{
+cat $CONF/businessprocess_tpaicnet.conf | while read line
+do
+        WEB_SERVER_IP=`echo $line|awk -F: '{print $1}'`
+        WEB_DIR=`echo $line|awk -F: '{print $2}'`
+
+        #创建目录
+         expect -c "
+                spawn /usr/bin/ssh -o StrictHostKeyChecking=no -i $PRIVATE_KEY $SSH_USER@$WEB_SERVER_IP
+                set timeout -1
+                expect \"\*Enter passphrase\*:\"
+                send \"$SSH_PASSWORD\r\"
+                expect \"\*]*\"
+                send \"sudo mkdir $WEB_DIR$DATE\r\"
+                expect \"\*]*\"
+                send \"sudo cp -apf $WEB_DIR/* $WEB_DIR$DATE\r\"
+                expect \"\*]*\"
+                send \"exit\r\"
+                expect eof
+                "
+         rev_md=`echo $?`
+         if [[ $rev_md -eq 0 ]];then
+        #更新WEB数据
+                        expect -c "
+                        spawn /usr/bin/ssh -o StrictHostKeyChecking=no -i $PRIVATE_KEY $SSH_USER@$WEB_SERVER_IP
+                        set timeout -1
+                        expec \"\*Enter passphrase\*:\"
+                        send \"$SSH_PASSWORD\r\"
+                        expect \"\*]*\"
+                        send \"sudo /usr/bin/rsync -av --delete --exclude=*/.svn --exclude=*/applicationContext_itf_gorm.xml --exclude=*/applicationContext_itf.xml --exclude=*/itf_config.gdsl --exclude=*/processor.properties --exclude=*/applicationContext-cacheMan
+ager.xml --exclude=*/ehcache-task.xml --exclude=*/task-inscar-manager.properties --exclude=*/terracotta-license.key rsync://$RSYNC_SERVER/$RSYNC_SHARE_BUSINESSPROCESS_TPAIC_NET_DIR $WEB_DIR$DATE\r\"
+                        expect \"\*]*\"
+                        send \"exit\r\"
+                        expect eof
+                        "
+                rev_rsync=`echo $?`
+                if [[ $rev_rsync -eq 0 ]];then
+                #启动resin服务
+                        expect -c "
+                                spawn /usr/bin/ssh -o StrictHostKeyChecking=no -i $PRIVATE_KEY $SSH_USER@$WEB_SERVER_IP
+                                set timeout -1
+                                expect \"\*Enter passphrase\*:\"
+                                send \"$SSH_PASSWORD\r\"
+                                expect \"\*]*\"
+                                send \"sudo /data/www/itf/processor/tpaic/b2bNetVehicle/startup.sh stop\r\"
+                                expect \"\*]*\"
+                                send \"cd /data/www/itf/processor/tpaic/\r\"
+                                expect \"\*]*\"
+                                send \"sudo unlink b2bNetVehicle\r\"
+                                expect \"\*]*\"
+                                send \"sudo ln -s $WEB_DIR$DATE b2bNetVehicle\r\"
+                                expect \"\*]*\"
+                                send \"sudo chown www.www -R *\r\"
+                                expect \"\*]*\"
+                                send \"sudo /data/www/itf/processor/tpaic/b2bNetVehicle/startup.sh start\r\"
+                                expect \"\*]*\"
+                                send \"exit\r\"
+                                expect eof
+                                "
+                        rev_start=`echo $?`
+                        if [[ $rev_start -eq 0 ]];then
+                                echo "$WEB_SERVER_IP服务器上的WEB更新完成."|tee -a $LOG/tpaic_net-$DATE.log
+                        else
+                                echo "$WEB_SERVER_IP服务器上的resin服务启动不成功!!!"|tee -a $LOG/tpaic_net-$DATE.log
+                                continue
+                        fi
+                else
+                        echo "$WEB_SERVER_IP服务器上的数据更新不成功!!!"|tee -a $LOG/tpaic_net-$DATE.log
+                        continue
+                fi
+         else
+                echo "$WEB_SERVER_IP服务器上的数据复制不成功!!!"|tee -a $LOG/tpaic_net-$DATE.log
+                continue
+         fi
+done
+}
+
+UPDATE_BUSINESSPROCESS_VIRTUAL_NET()
+{
+cat $CONF/businessprocess_virtualnet.conf | while read line
+do
+        WEB_SERVER_IP=`echo $line|awk -F: '{print $1}'`
+        WEB_DIR=`echo $line|awk -F: '{print $2}'`
+
+        #创建目录
+         expect -c "
+                spawn /usr/bin/ssh -o StrictHostKeyChecking=no -i $PRIVATE_KEY $SSH_USER@$WEB_SERVER_IP
+                set timeout -1
+                expect \"\*Enter passphrase\*:\"
+                send \"$SSH_PASSWORD\r\"
+                expect \"\*]*\"
+                send \"sudo mkdir $WEB_DIR$DATE\r\"
+                expect \"\*]*\"
+                send \"sudo cp -apf $WEB_DIR/* $WEB_DIR$DATE\r\"
+                expect \"\*]*\"
+                send \"exit\r\"
+                expect eof
+                "
+         rev_md=`echo $?`
+         if [[ $rev_md -eq 0 ]];then
+        #更新WEB数据
+                        expect -c "
+                        spawn /usr/bin/ssh -o StrictHostKeyChecking=no -i $PRIVATE_KEY $SSH_USER@$WEB_SERVER_IP
+                        set timeout -1
+                        expect \"\*Enter passphrase\*:\"
+                        sen \"$SSH_PASSWORD\r\"
+                        expect \"\*]*\"
+                        send \"sudo /usr/bin/rsync -av --delete --exclude=*/.svn --exclude=*/applicationContext_itf_gorm.xml --exclude=*/applicationContext_itf.xml --exclude=*/itf_config.gdsl --exclude=*/processor.properties --exclude=*/applicationContext-cacheMan
+ager.xml --exclude=*/ehcache-task.xml --exclude=*/task-inscar-manager.properties --exclude=*/terracotta-license.key rsync://$RSYNC_SERVER/$RSYNC_SHARE_BUSINESSPROCESS_VIRTUAL_NET_DIR $WEB_DIR$DATE\r\"
+                        expect \"\*]*\"
+                        send \"exit\r\"
+                        expect eof
+                        "
+                rev_rsync=`echo $?`
+                if [[ $rev_rsync -eq 0 ]];then
+                #启动resin服务
+                        expect -c "
+                                spawn /usr/bin/ssh -o StrictHostKeyChecking=no -i $PRIVATE_KEY $SSH_USER@$WEB_SERVER_IP
+                                set timeout -1
+                                expect \"\*Enter passphrase\*:\"
+                                send \"$SSH_PASSWORD\r\"
+                                expect \"\*]*\"
+                                send \"sudo /data/www/itf/processor/virtual/vehicle/startup.sh stop\r\"
+                                expect \"\*]*\"
+                                send \"cd /data/www/itf/processor/virtual/\r\"
+                                expect \"\*]*\"
+                                send \"sudo unlink vehicle\r\"
+                                expect \"\*]*\"
+                                send \"sudo ln -s $WEB_DIR$DATE vehicle\r\"
+                                expect \"\*]*\"
+                                send \"sudo chown www.www -R *\r\"
+                                expect \"\*]*\"
+                                send \"sudo /data/www/itf/processor/virtual/vehicle/startup.sh start\r\"
+                                expect \"\*]*\"
+                                send \"exit\r\"
+                                expect eof
+                                "
+                        rev_start=`echo $?`
+                        if [[ $rev_start -eq 0 ]];then
+                                echo "$WEB_SERVER_IP服务器上的WEB更新完成."|tee -a $LOG/virtual_net-$DATE.log
+                        else
+                                echo "$WEB_SERVER_IP服务器上的resin服务启动不成功!!!"|tee -a $LOG/virtual_net-$DATE.log
+                                continue
+                        fi
+                else
+                        echo "$WEB_SERVER_IP服务器上的数据更新不成功!!!"|tee -a $LOG/virtual_net-$DATE.log
+                        continue
+                fi
+         else
+                echo "$WEB_SERVER_IP服务器上的数据复制不成功!!!"|tee -a $LOG/virtual_net-$DATE.log
+                continue
+         fi
+done
+}
+
+UPDATE_BUSINESSPROCESS_EHUATAI_TRADITION()
+{
+cat $CONF/businessprocess_ehuataitradition.conf | while read line
+do
+        WEB_SERVER_IP=`echo $line|awk -F: '{print $1}'`
+        WEB_DIR=`echo $line|awk -F: '{print $2}'`
+
+        #创建目录
+         expect -c "
+                spawn /usr/bin/ssh -o StrictHostKeyChecking=no -i $PRIVATE_KEY $SSH_USER@$WEB_SERVER_IP
+                set timeout -1
+                expect \"\*Enter passphrase\*:\"
+                send \"$SSH_PASSWORD\r\"
+                expect \"\*]*\"
+                send \"sudo mkdir $WEB_DIR$DATE\r\"
+                expect \"\*]*\"
+                send \"sudo cp -apf $WEB_DIR/* $WEB_DIR$DATE\r\"
+                expect \"\*]*\"
+                send \"exit\r\"
+                expect eof
+                "
+         rev_md=`echo $?`
+         if [[ $rev_md -eq 0 ]];then
+        #更新WEB数据
+                        expect -c "
+                        spawn /usr/bin/ssh -o StrictHostKeyChecking=no -i $PRIVATE_KEY $SSH_USER@$WEB_SERVER_IP
+                        set timeout -1
+                        expect \"\*Enter passphrase\*:\"
+                        sen \"$SSH_PASSWORD\r\"
+                        expect \"\*]*\"
+                        send \"sudo /usr/bin/rsync -av --delete --exclude=*/.svn --exclude=*/applicationContext_itf_gorm.xml --exclude=*/applicationContext_itf.xml --exclude=*/itf_config.gdsl --exclude=*/processor.properties --exclude=*/applicationContext-cacheManager.xml --exclude=*/ehcache-task.xml --exclude=*/task-inscar-manager.properties --exclude=*/terracotta-license.key rsync://$RSYNC_SERVER/$RSYNC_SHARE_BUSINESSPROCESS_EHUATAI_TRADITION_DIR $WEB_DIR$DATE\r\"
+                        expect \"\*]*\"
+                        send \"exit\r\"
+                        expect eof
+                        "
+                rev_rsync=`echo $?`
+                if [[ $rev_rsync -eq 0 ]];then
+                #启动resin服务
+                        expect -c "
+                                spawn /usr/bin/ssh -o StrictHostKeyChecking=no -i $PRIVATE_KEY $SSH_USER@$WEB_SERVER_IP
+                                set timeout -1
+                                expect \"\*Enter passphrase\*:\"
+                                send \"$SSH_PASSWORD\r\"
+                                expect \"\*]*\"
+                                send \"sudo /data/www/itf/processor/ehuatai/b2bTraditionVehicle/startup.sh stop\r\"
+                                expect \"\*]*\"
+                                send \"cd /data/www/itf/processor/ehuatai/\r\"
+                                expect \"\*]*\"
+                                send \"sudo unlink b2bTraditionVehicle\r\"
+                                expect \"\*]*\"
+                                send \"sudo ln -s $WEB_DIR$DATE b2bTraditionVehicle\r\"
+                                expect \"\*]*\"
+                                send \"sudo chown www.www -R *\r\"
+                                expect \"\*]*\"
+                                send \"sudo /data/www/itf/processor/ehuatai/b2bTraditionVehicle/startup.sh start\r\"
+                                expect \"\*]*\"
+                                send \"exit\r\"
+                                expect eof
+                                "
+                        rev_start=`echo $?`
+                        if [[ $rev_start -eq 0 ]];then
+                                echo "$WEB_SERVER_IP服务器上的WEB更新完成."|tee -a $LOG/ehuatai_tradition-$DATE.log
+                        else
+                                echo "$WEB_SERVER_IP服务器上的resin服务启动不成功!!!"|tee -a $LOG/ehuatai_tradition-$DATE.log
+                                continue
+                        fi
+                else
+                        echo "$WEB_SERVER_IP服务器上的数据更新不成功!!!"|tee -a $LOG/ehuatai_tradition-$DATE.log
+                        continue
+                fi
+         else
+                echo "$WEB_SERVER_IP服务器上的数据复制不成功!!!"|tee -a $LOG/ehuatai_tradition-$DATE.log
+                continue
+         fi
+done
+}
+
+
+
+usage()
+{
+	echo "======================================================================="
+	echo "usage ./$0 b2b_com|b2c_com|b2c_admin|cx|t|ssogo|b2c_zw zzb|atm|cipm|cm|cx|go2|order|resin|image|dsl|carimage|mysql|mongodb|conf|all|alltrust_net|alltrust_tradition|bpic_net|cpic_net|sinosafe_tradition|sinosig_net|tpaic_net|virtual_net|ehuatai_tradition"
+	echo "======================================================================="
+}
+
+ready()
+{
+	echo "Are you ready?(yes/no)"
+	read anw
+}
+
+TAR_WAR()
+{
+	rm -rf $WEB_DIR/*
+	WAR_PACKAGE_NAME=`ls $PACKAGE/war`
+	unzip $PACKAGE/war/$WAR_PACKAGE_NAME -d $WEB_DIR
+	if [ $? -eq 0 ];then
+		echo "$PACKAGE/war/$WAR_PACKAGE_NAME解压成功。$PACKAGE/war/$WAR_PACKAGE_NAME已经删除。"|tee -a $LOG/resin-$DATE.log
+		rm -rf $PACKAGE/war/$WAR_PACKAGE_NAME
+		chown www.www -R $WEB_DIR
+	else
+		echo "$PACKAGE/war/$WAR_PACKAGE_NAME解压不成功.!!!"|tee -a $LOG/resin-$DATE.log
+		exit
+	fi
+}
+
+TAR_IMAGE()
+{
+	rm -rf $IMAGE_DIR/*
+	IMAGE_PACKAGE_NAME=`ls $PACKAGE/image`
+	unzip $PACKAGE/image/$IMAGE_PACKAGE_NAME -d $IMAGE_DIR
+	if [ $? -eq 0 ];then
+		echo "$PACKAGE/image/$IMAGE_PACKAGE_NAME解压成功。$PACKAGE/image/$IMAGE_PACKAGE_NAME已经删除。"|tee -a $LOG/image-$DATE.log
+		rm -rf $PACKAGE/image/$IMAGE_PACKAGE_NAME
+		chown www.www -R $IMAGE_DIR
+	else
+		echo "$PACKAGE/image/$IMAGE_PACKAGE_NAME解压不成功.!!!"|tee -a $LOG/image-$DATE.log
+		exit
+	fi
+}
+
+TAR_DSL()
+{
+	rm -rf $DSL_DIR/*
+	DSL_PACKAGE_NAME=`ls $PACKAGE/dsl`
+	tar -xvf $PACKAGE/dsl/$DSL_PACKAGE_NAME -C $DSL_DIR
+	if [ $? -eq 0 ];then
+		echo "$PACKAGE/dsl/$DSL_PACKAGE_NAME解压成功。$PACKAGE/dsl/$DSL_PACKAGE_NAME已经删除。"|tee -a $LOG/dsl-$DATE.log
+		rm -rf $PACKAGE/dsl/$DSL_PACKAGE_NAME
+		chown www.www -R $DSL_DIR
+	else
+		echo "$PACKAGE/dsl/$DSL_PACKAGE_NAME解压不成功.!!!"|tee -a $LOG/dsl-$DATE.log
+		exit
+	fi
+}
+
+TAR_CARIMAGE()
+{
+	rm -rf $CARIMAGE_DIR/*
+	CARIMAGE_PACKAGE_NAME=`ls $PACKAGE/carimage`
+	tar -xvf $PACKAGE/carimage/$CARIMAGE_PACKAGE_NAME -C $CARIMAGE_DIR
+	if [ $? -eq 0 ];then
+		echo "$PACKAGE/carimage/$CARIMAGE_PACKAGE_NAME解压成功。$PACKAGE/carimage/$CARIMAGE_PACKAGE_NAME已经删除。"|tee -a $LOG/carimage-$DATE.log
+		rm -rf $PACKAGE/carimage/$CARIMAGE_PACKAGE_NAME
+		chown www.www -R $CARIMAGE_DIR
+	else
+		echo "$PACKAGE/carimage/$CARIMAGE_PACKAGE_NAME解压不成功.!!!"|tee -a $LOG/carimage-$DATE.log
+		exit
+	fi
+}
+
+TAR_MONGODB()
+{
+	rm -rf $MONGODB_DIR/*
+	MONGODB_PACKAGE_NAME=`ls $PACKAGE/mongodb`
+	tar -xvf $PACKAGE/mongodb/$MONGODB_PACKAGE_NAME -C $MONGODB_DIR
+	if [ $? -eq 0 ];then
+		echo "$PACKAGE/mongodb/$MONGODB_PACKAGE_NAME解压成功。$PACKAGE/mongodb/$MONGODB_PACKAGE_NAME已经删除。"|tee -a $LOG/mongodb-$DATE.log
+		rm -rf $PACKAGE/mongodb/$MONGODB_PACKAGE_NAME
+	else
+		echo "$PACKAGE/mongodb/$MONGODB_PACKAGE_NAME解压不成功.!!!"|tee -a $LOG/mongodb-$DATE.log
+		exit
+	fi
+}
+
+UNTAR_ZZB()
+{
+	rm -rf $ZZB_DIR/*
+	ZZB_PACKAGE_NAME=`ls $PACKAGE/b2b/zzb`
+	unzip $PACKAGE/b2b/zzb/$ZZB_PACKAGE_NAME -d $ZZB_DIR
+	if [ $? -eq 0 ];then
+		echo "$PACKAGE/b2b/zzb/$ZZB_PACKAGE_NAME解压成功。$PACKAGE/b2b/zzb/$ZZB_PACKAGE_NAME已经删除。"|tee -a $LOG/zzb-$DATE.log
+		rm -rf $PACKAGE/b2b/zzb/$ZZB_PACKAGE_NAME
+		chown www.www -R $ZZB_DIR
+	else
+		echo "$PACKAGE/b2b/zzb/$ZZB_PACKAGE_NAME解压不成功.!!!"|tee -a $LOG/zzb-$DATE.log
+		exit
+	fi
+}
+
+UNTAR_ATM()
+{
+        rm -rf $ATM_DIR/*
+        ATM_PACKAGE_NAME=`ls $PACKAGE/b2b/atm`
+        unzip $PACKAGE/b2b/atm/$ATM_PACKAGE_NAME -d $ATM_DIR
+        if [ $? -eq 0 ];then
+                echo "$PACKAGE/b2b/atm/$ATM_PACKAGE_NAME解压成功。$PACKAGE/b2b/atm/$ATM_PACKAGE_NAME已经删除。"|tee -a $LOG/atm-$DATE.log
+                rm -rf $PACKAGE/b2b/atm/$ATM_PACKAGE_NAME
+                chown www.www -R $ATM_DIR
+        else
+                echo "$PACKAGE/b2b/atm/$ATM_PACKAGE_NAME解压不成功.!!!"|tee -a $LOG/atm-$DATE.log
+                exit
+        fi
+}
+
+UNTAR_CIPM()
+{
+        rm -rf $CIPM_DIR/*
+        CIPM_PACKAGE_NAME=`ls $PACKAGE/b2b/cipm`
+        unzip $PACKAGE/b2b/cipm/$CIPM_PACKAGE_NAME -d $CIPM_DIR
+        if [ $? -eq 0 ];then
+                echo "$PACKAGE/b2b/cipm/$CIPM_PACKAGE_NAME解压成功。$PACKAGE/b2b/cipm/$CIPM_PACKAGE_NAME已经删除。"|tee -a $LOG/cipm-$DATE.log
+                rm -rf $PACKAGE/b2b/cipm/$CIPM_PACKAGE_NAME
+                chown www.www -R $CIPM_DIR
+        else
+                echo "$PACKAGE/b2b/cipm/$CIPM_PACKAGE_NAME解压不成功.!!!"|tee -a $LOG/cipm-$DATE.log
+                exit
+        fi
+}
+
+UNTAR_CM()
+{
+        rm -rf $CM_DIR/*
+        CM_PACKAGE_NAME=`ls $PACKAGE/b2b/cm`
+        unzip $PACKAGE/b2b/cm/$CM_PACKAGE_NAME -d $CM_DIR
+        if [ $? -eq 0 ];then
+                echo "$PACKAGE/b2b/cm/$CM_PACKAGE_NAME解压成功。$PACKAGE/b2b/cm/$CM_PACKAGE_NAME已经删除。"|tee -a $LOG/cm-$DATE.log
+                rm -rf $PACKAGE/b2b/cm/$CM_PACKAGE_NAME
+                chown www.www -R $CM_DIR
+        else
+                echo "$PACKAGE/b2b/cm/$CM_PACKAGE_NAME解压不成功.!!!"|tee -a $LOG/cm-$DATE.log
+                exit
+        fi
+}
+
+UNTAR_CX()
+{
+        rm -rf $CX_DIR/*
+        CX_PACKAGE_NAME=`ls $PACKAGE/b2b/cx`
+        unzip $PACKAGE/b2b/cx/$CX_PACKAGE_NAME -d $CX_DIR
+        if [ $? -eq 0 ];then
+                echo "$PACKAGE/b2b/cx/$CX_PACKAGE_NAME解压成功。$PACKAGE/b2b/cx/$CX_PACKAGE_NAME已经删除。"|tee -a $LOG/cx-$DATE.log
+                rm -rf $PACKAGE/b2b/cx/$CX_PACKAGE_NAME
+                chown www.www -R $CX_DIR
+        else
+                echo "$PACKAGE/b2b/cx/$CX_PACKAGE_NAME解压不成功.!!!"|tee -a $LOG/cx-$DATE.log
+                exit
+        fi
+}
+
+UNTAR_GO2()
+{
+        rm -rf $GO2_DIR/*
+        GO2_PACKAGE_NAME=`ls $PACKAGE/b2b/go2`
+        unzip $PACKAGE/b2b/go2/$GO2_PACKAGE_NAME -d $GO2_DIR
+        if [ $? -eq 0 ];then
+                echo "$PACKAGE/b2b/go2/$GO2_PACKAGE_NAME解压成功。$PACKAGE/b2b/go2/$GO2_PACKAGE_NAME已经删除。"|tee -a $LOG/go2-$DATE.log
+                rm -rf $PACKAGE/b2b/go2/$GO2_PACKAGE_NAME
+                chown www.www -R $GO2_DIR
+        else
+                echo "$PACKAGE/b2b/go2/$GO2_PACKAGE_NAME解压不成功.!!!"|tee -a $LOG/go2-$DATE.log
+                exit
+        fi
+}
+
+UNTAR_ORDER()
+{
+        rm -rf $ORDER_DIR/*
+        ORDER_PACKAGE_NAME=`ls $PACKAGE/b2b/order`
+        unzip $PACKAGE/b2b/order/$ORDER_PACKAGE_NAME -d $ORDER_DIR
+        if [ $? -eq 0 ];then
+                echo "$PACKAGE/b2b/order/$ORDER_PACKAGE_NAME解压成功。$PACKAGE/b2b/order/$ORDER_PACKAGE_NAME已经删除。"|tee -a $LOG/order-$DATE.log
+                rm -rf $PACKAGE/b2b/order/$ORDER_PACKAGE_NAME
+                chown www.www -R $ORDER_DIR
+        else
+                echo "$PACKAGE/b2b/order/$ORDER_PACKAGE_NAME解压不成功.!!!"|tee -a $LOG/order-$DATE.log
+                exit
+        fi
+}
+
+UNTAR_BUSINESSPROCESS_ALLTRUST_NET()
+{
+        rm -rf $ALLTRUSTNET_DIR/*
+        ALLTRUST_NET_PACKAGE_NAME=`ls $PACKAGE/b2b/businessprocess/alltrust/net`
+        unzip $PACKAGE/b2b/businessprocess/alltrust/net/$ALLTRUST_NET_PACKAGE_NAME -d $ALLTRUSTNET_DIR
+        if [ $? -eq 0 ];then
+                echo "$PACKAGE/b2b/businessprocess/alltrust/net/$ALLTRUST_NET_PACKAGE_NAME解压成功。$PACKAGE/b2b/businessprocess/alltrust/net/$ALLTRUST_NET_PACKAGE_NAME已经删除。"|tee -a $LOG/alltrust_net-$DATE.log
+                rm -rf $PACKAGE/b2b/businessprocess/alltrust/net/$ALLTRUST_NET_PACKAGE_NAME
+                chown www.www -R $ALLTRUSTNET_DIR
+        else
+                echo "$PACKAGE/b2b/businessprocess/alltrust/net/$ALLTRUST_NET_PACKAGE_NAME解压不成功.!!!"|tee -a $LOG/alltrust_net-$DATE.log
+                exit
+        fi
+}
+
+UNTAR_BUSINESSPROCESS_ALLTRUST_TRADITION()
+{
+        rm -rf $ALLTRUSTTRADITION_DIR/*
+        ALLTRUST_TRADITION_PACKAGE_NAME=`ls $PACKAGE/b2b/businessprocess/alltrust/tradition`
+        unzip $PACKAGE/b2b/businessprocess/alltrust/tradition/$ALLTRUST_TRADITION_PACKAGE_NAME -d $ALLTRUSTTRADITION_DIR
+        if [ $? -eq 0 ];then
+                echo "$PACKAGE/b2b/businessprocess/alltrust/tradition/$ALLTRUST_TRADITION_PACKAGE_NAME解压成功。$PACKAGE/b2b/businessprocess/alltrust/tradition/$ALLTRUST_TRADITION_PACKAGE_NAME已经删除。"|tee -a $LOG/alltrust_tradition-$DATE.log
+                rm -rf $PACKAGE/b2b/businessprocess/alltrust/tradition/$ALLTRUST_TRADITION_PACKAGE_NAME
+                chown www.www -R $ALLTRUSTTRADITION_DIR
+        else
+                echo "$PACKAGE/b2b/businessprocess/alltrust/tradition/$ALLTRUST_TRADITION_PACKAGE_NAME解压不成功.!!!"|tee -a $LOG/alltrust_tradition-$DATE.log
+                exit
+        fi
+}
+
+UNTAR_BUSINESSPROCESS_BPIC_NET()
+{
+        rm -rf $BPICNET_DIR/*
+        BPIC_NET_PACKAGE_NAME=`ls $PACKAGE/b2b/businessprocess/bpic/net`
+        unzip $PACKAGE/b2b/businessprocess/bpic/net/$BPIC_NET_PACKAGE_NAME -d $BPICNET_DIR
+        if [ $? -eq 0 ];then
+                echo "$PACKAGE/b2b/businessprocess/bpic/net/$BPIC_NET_PACKAGE_NAME解压成功。$PACKAGE/b2b/businessprocess/bpic/net/$BPIC_NET_PACKAGE_NAME已经删除。"|tee -a $LOG/bpic_net-$DATE.log
+                rm -rf $PACKAGE/b2b/businessprocess/bpic/net/$BPIC_NET_PACKAGE_NAME
+                chown www.www -R $BPICNET_DIR
+        else
+                echo "$PACKAGE/b2b/businessprocess/bpic/net/$BPIC_NET_PACKAGE_NAME解压不成功.!!!"|tee -a $LOG/bpic_net-$DATE.log
+                exit
+        fi
+}
+
+UNTAR_BUSINESSPROCESS_CPIC_NET()
+{
+        rm -rf $CPICNET_DIR/*
+        CPIC_NET_PACKAGE_NAME=`ls $PACKAGE/b2b/businessprocess/cpic/net`
+        unzip $PACKAGE/b2b/businessprocess/cpic/net/$CPIC_NET_PACKAGE_NAME -d $CPICNET_DIR
+        if [ $? -eq 0 ];then
+                echo "$PACKAGE/b2b/businessprocess/cpic/net/$CPIC_NET_PACKAGE_NAME解压成功。$PACKAGE/b2b/businessprocess/cpic/net/$CPIC_NET_PACKAGE_NAME已经删除。"|tee -a $LOG/cpic_net-$DATE.log
+                rm -rf $PACKAGE/b2b/businessprocess/cpic/net/$CPIC_NET_PACKAGE_NAME
+                chown www.www -R $CPICNET_DIR
+        else
+                echo "$PACKAGE/b2b/businessprocess/cpic/net/$CPIC_NET_PACKAGE_NAME解压不成功.!!!"|tee -a $LOG/cpic_net-$DATE.log
+                exit
+        fi
+}
+
+UNTAR_BUSINESSPROCESS_SINOSAFE_TRADITION()
+{
+        rm -rf $SINOSAFETRADITION_DIR/*
+        SINOSAFE_TRADITION_PACKAGE_NAME=`ls $PACKAGE/b2b/businessprocess/sinosafe/tradition`
+        unzip $PACKAGE/b2b/businessprocess/sinosafe/tradition/$SINOSAFE_TRADITION_PACKAGE_NAME -d $SINOSAFETRADITION_DIR
+        if [ $? -eq 0 ];then
+                echo "$PACKAGE/b2b/businessprocess/sinosafe/tradition/$SINOSAFE_TRADITION_PACKAGE_NAME解压成功。$PACKAGE/b2b/businessprocess/sinosafe/tradition/$SINOSAFE_TRADITION_PACKAGE_NAME已经删除。"|tee -a $LOG/sinosafe_tradition-$DATE.log
+                rm -rf $PACKAGE/b2b/businessprocess/sinosafe/tradition/$SINOSAFE_TRADITION_PACKAGE_NAME
+                chown www.www -R $SINOSAFETRADITION_DIR
+        else
+                echo "$PACKAGE/b2b/businessprocess/sinosafe/tradition/$SINOSAFE_TRADITION_PACKAGE_NAME解压不成功.!!!"|tee -a $LOG/sinosafe_tradition-$DATE.log
+                exit
+        fi
+}
+
+UNTAR_BUSINESSPROCESS_SINOSIG_NET()
+{
+        rm -rf $SINOSIGNET_DIR/*
+        SINOSIG_NET_PACKAGE_NAME=`ls $PACKAGE/b2b/businessprocess/sinosig/net`
+        unzip $PACKAGE/b2b/businessprocess/sinosig/net/$SINOSIG_NET_PACKAGE_NAME -d $SINOSIGNET_DIR
+        if [ $? -eq 0 ];then
+                echo "$PACKAGE/b2b/businessprocess/sinosig/net/$SINOSIG_NET_PACKAGE_NAME解压成功。$PACKAGE/b2b/businessprocess/sinosig/net/$SINOSIG_NET_PACKAGE_NAME已经删除。"|tee -a $LOG/sinosig_net-$DATE.log
+                rm -rf $PACKAGE/b2b/businessprocess/sinosig/net/$SINOSIG_NET_PACKAGE_NAME
+                chown www.www -R $SINOSIGNET_DIR
+        else
+                echo "$PACKAGE/b2b/businessprocess/sinosig/net/$SINOSIG_NET_PACKAGE_NAME解压不成功.!!!"|tee -a $LOG/sinosig_net-$DATE.log
+                exit
+        fi
+}
+
+UNTAR_BUSINESSPROCESS_TPAIC_NET()
+{
+        rm -rf $TPAICNET_DIR/*
+        TPAIC_NET_PACKAGE_NAME=`ls $PACKAGE/b2b/businessprocess/tpaic/net`
+        unzip $PACKAGE/b2b/businessprocess/tpaic/net/$TPAIC_NET_PACKAGE_NAME -d $TPAICNET_DIR
+        if [ $? -eq 0 ];then
+                echo "$PACKAGE/b2b/businessprocess/tpaic/net/$TPAIC_NET_PACKAGE_NAME解压成功。$PACKAGE/b2b/businessprocess/tpaic/net/$TPAIC_NET_PACKAGE_NAME已经删除。"|tee -a $LOG/tpaic_net-$DATE.log
+                rm -rf $PACKAGE/b2b/businessprocess/tpaic/net/$TPAIC_NET_PACKAGE_NAME
+                chown www.www -R $TPAICNET_DIR
+        else
+                echo "$PACKAGE/b2b/businessprocess/tpaic/net/$TPAIC_NET_PACKAGE_NAME解压不成功.!!!"|tee -a $LOG/tpaic_net-$DATE.log
+                exit
+        fi
+}
+
+UNTAR_BUSINESSPROCESS_VIRTUAL_NET()
+{
+        rm -rf $VIRTUALNET_DIR/*
+        VIRTUAL_NET_PACKAGE_NAME=`ls $PACKAGE/b2b/businessprocess/virtual/net`
+        unzip $PACKAGE/b2b/businessprocess/virtual/net/$VIRTUAL_NET_PACKAGE_NAME -d $VIRTUALNET_DIR
+        if [ $? -eq 0 ];then
+                echo "$PACKAGE/b2b/businessprocess/virtual/net/$VIRTUAL_NET_PACKAGE_NAME解压成功。$PACKAGE/b2b/businessprocess/virtual/net/$VIRTUAL_NET_PACKAGE_NAME已经删除。"|tee -a $LOG/virtual_net-$DATE.log
+                rm -rf $PACKAGE/b2b/businessprocess/virtual/net/$VIRTUAL_NET_PACKAGE_NAME
+                chown www.www -R $VIRTUALNET_DIR
+        else
+                echo "$PACKAGE/b2b/businessprocess/virtual/net/$VIRTUAL_NET_PACKAGE_NAME解压不成功.!!!"|tee -a $LOG/virtual_net-$DATE.log
+                exit
+        fi
+}
+
+UNTAR_BUSINESSPROCESS_EHUATAI_TRADITION()
+{
+        rm -rf $EHUATAITRADITION_DIR/*
+        EHUATAI_TRADITION_PACKAGE_NAME=`ls $PACKAGE/b2b/businessprocess/ehuatai/tradition`
+        unzip $PACKAGE/b2b/businessprocess/ehuatai/tradition/$EHUATAI_TRADITION_PACKAGE_NAME -d $EHUATAITRADITION_DIR
+        if [ $? -eq 0 ];then
+                echo "$PACKAGE/b2b/businessprocess/ehuatai/tradition/$EHUATAI_TRADITION_PACKAGE_NAME解压成功。$PACKAGE/b2b/businessprocess/ehuatai/tradition/$EHUATAI_TRADITION_PACKAGE_NAME已经删除。"|tee -a $LOG/ehuatai_tradition-$DATE.log
+                rm -rf $PACKAGE/b2b/businessprocess/ehuatai/tradition/$EHUATAI_TRADITION_PACKAGE_NAME
+                chown www.www -R $EHUATAITRADITION_DIR
+        else
+                echo "$PACKAGE/b2b/businessprocess/ehuatai/tradition/$EHUATAI_TRADITION_PACKAGE_NAME解压不成功.!!!"|tee -a $LOG/ehuatai_tradition-$DATE.log
+                exit
+        fi
+}
+
+
+case $1 in
+b2c_com)
+	\cp $CONF_TEMPLATE/b2c_com_resin.conf $CONF/resin.conf
+	\cp $CONF_TEMPLATE/b2c_com_mysql.conf $CONF/mysql.conf
+	\cp $CONF_TEMPLATE/b2c_com_mongodb.conf $CONF/mongodb.conf
+	\cp $CONF_TEMPLATE/b2c_com_image.conf $CONF/image.conf
+	\cp $CONF_TEMPLATE/b2c_com_dsl.conf $CONF/dsl.conf
+	\cp $CONF_TEMPLATE/b2c_com_conf.txt $CONF/conf.txt
+	\cp $CONF_TEMPLATE/b2c_com_carimage.conf $CONF/carimage.conf
+	\cp $CONF_TEMPLATE/rsync.conf $CONF/rsync.conf
+	. $CONF/rsync.conf
+	;;
+b2c_admin)
+	\cp $CONF_TEMPLATE/rsync.conf $CONF/rsync.conf
+	\cp $CONF_TEMPLATE/b2c_admin_resin.conf $CONF/resin.conf
+	\cp $CONF_TEMPLATE/b2c_admin_conf.txt $CONF/conf.txt
+	\cp $CONF_TEMPLATE/b2c_admin_dsl.conf $CONF/dsl.conf
+	. $CONF/rsync.conf
+	;;
+b2c_zw)
+	\cp $CONF_TEMPLATE/b2c_zw_carimage.conf $CONF/carimage.conf
+	\cp $CONF_TEMPLATE/b2c_zw_conf.txt $CONF/conf.txt
+	\cp $CONF_TEMPLATE/b2c_zw_dsl.conf $CONF/dsl.conf
+	\cp $CONF_TEMPLATE/b2c_zw_image.conf $CONF/image.conf
+	\cp $CONF_TEMPLATE/b2c_zw_mongodb.conf $CONF/mongodb.conf
+	\cp $CONF_TEMPLATE/b2c_zw_mysql.conf $CONF/mysql.conf
+	\cp $CONF_TEMPLATE/b2c_zw_resin.conf $CONF/resin.conf
+	\cp $CONF_TEMPLATE/rsync.conf $CONF/rsync.conf
+	. $CONF/rsync.conf
+	;;
+cx)
+	\cp $CONF_TEMPLATE/b2c_cx_resin.conf $CONF/resin.conf
+	\cp $CONF_TEMPLATE/rsync.conf $CONF/rsync.conf
+	. $CONF/rsync.conf
+	;;
+t)
+	\cp $CONF_TEMPLATE/b2c_t_resin.conf $CONF/resin.conf
+	\cp $CONF_TEMPLATE/rsync.conf $CONF/rsync.conf
+	\cp $CONF_TEMPLATE/b2c_t_conf.txt $CONF/conf.txt
+	. $CONF/rsync.conf
+	;;
+ssogo)
+	\cp $CONF_TEMPLATE/b2c_ssogo_resin.conf $CONF/resin.conf
+	\cp $CONF_TEMPLATE/rsync.conf $CONF/rsync.conf
+	. $CONF/rsync.conf
+	;;
+b2b_com)
+	\cp $CONF_TEMPLATE/rsync.conf $CONF/rsync.conf
+	\cp $CONF_TEMPLATE/b2b_com_resin.conf $CONF/resin.conf
+        \cp $CONF_TEMPLATE/b2b_com_zzb.conf $CONF/zzb.conf
+        \cp $CONF_TEMPLATE/b2b_com_atm.conf $CONF/atm.conf
+        \cp $CONF_TEMPLATE/b2b_com_cipm.conf $CONF/cipm.conf
+        \cp $CONF_TEMPLATE/b2b_com_cm.conf $CONF/cm.conf
+        \cp $CONF_TEMPLATE/b2b_com_cx.conf $CONF/cx.conf
+        \cp $CONF_TEMPLATE/b2b_com_go2.conf $CONF/go2.conf
+        \cp $CONF_TEMPLATE/b2b_com_order.conf $CONF/order.conf
+        \cp $CONF_TEMPLATE/b2b_com_businessprocess_alltrustnet.conf $CONF/businessprocess_alltrustnet.conf
+        \cp $CONF_TEMPLATE/b2b_com_businessprocess_alltrusttradition.conf $CONF/businessprocess_alltrusttradition.conf
+        \cp $CONF_TEMPLATE/b2b_com_businessprocess_bpicnet.conf $CONF/businessprocess_bpicnet.conf
+        \cp $CONF_TEMPLATE/b2b_com_businessprocess_cpicnet.conf $CONF/businessprocess_cpicnet.conf
+        \cp $CONF_TEMPLATE/b2b_com_businessprocess_sinosafetradition.conf $CONF/businessprocess_sinosafetradition.conf
+        \cp $CONF_TEMPLATE/b2b_com_businessprocess_sinosignet.conf $CONF/businessprocess_sinosignet.conf
+        \cp $CONF_TEMPLATE/b2b_com_businessprocess_tpaicnet.conf $CONF/businessprocess_tpaicnet.conf
+        \cp $CONF_TEMPLATE/b2b_com_businessprocess_virtualnet.conf $CONF/businessprocess_virtualnet.conf
+        \cp $CONF_TEMPLATE/b2b_com_businessprocess_ehuataitradition.conf $CONF/businessprocess_ehuataitradition.conf
+	. $CONF/rsync.conf
+	;;
+*)
+	usage
+	exit
+	;;
+esac
+
+
+case $2 in
+resin)
+	echo "更新WEB服务的服务器和WEB目录如下："|tee -a $LOG/resin-$DATE.log
+	cat $CONF/resin.conf|tee -a $LOG/resin-$DATE.log
+	ready
+	if [ $anw = "yes" ];then
+		TAR_WAR
+		update_resin
+		rm -rf $CONF/*
+	else
+		exit
+	fi
+	;;
+image)
+	echo "更新IMAGE图片文件的服务器和IMAGE目录如下："|tee -a $LOG/image-$DATE.log
+	cat $CONF/image.conf|tee -a $LOG/image-$DATE.log
+	ready
+	if [ $anw = "yes" ];then
+		TAR_IMAGE
+		update_image
+		rm -rf $CONF/*
+	else
+		exit
+	fi
+	;;
+dsl)
+	echo "更新DSL文件的服务器和DSL目录如下:"|tee -a $LOG/dsl-$DATE.log
+	cat $CONF/dsl.conf|tee -a $LOG/dsl-$DATE.log
+	ready
+	if [ $anw = "yes" ];then
+		TAR_DSL
+		update_dsl
+		rm -rf $CONF/*
+	else
+		exit
+	fi
+	;;
+carimage)
+	echo "更新CARIMAGE图片文件的服务器和CARIMAGE目录如下:"|tee -a $LOG/carimage-$DATE.log
+	cat $CONF/carimage.conf|tee -a $LOG/carimage-$DATE.log
+	ready
+	if [ $anw = "yes" ];then
+		TAR_CARIMAGE
+		update_carimage
+		rm -rf $CONF/*
+	else
+		exit
+	fi
+	;;
+mysql)
+	echo "更新MYSQL的服务器和SQL文件如下:"|tee -a $LOG/mysql-$DATE.log
+	ls_sql=`ls -tr $PACKAGE/sql/`
+	echo "SQL_FILE=\"$ls_sql\"" >> $CONF/mysql.conf
+	cat $CONF/mysql.conf|tee -a $LOG/mysql-$DATE.log
+	ready
+	if [ $anw = "yes" ];then
+		update_mysql
+		rm -rf /data/update/mysql/*
+		rm -rf $CONF/*
+	else
+		exit
+	fi
+	;;
+mongodb)
+	echo "更新MONGODB的服务器和MONGODB文件如下:"|tee -a $LOG/mongodb-$DATE.log
+	cat $CONF/mongodb.conf|tee -a $LOG/mongodb-$DATE.log
+	ready
+	if [ $anw = "yes" ];then
+		TAR_MONGODB
+		update_mongodb
+		rm -rf $CONF/*
+	else
+		exit
+	fi
+	;;
+conf)
+	echo "更新配置文件的服务器和配置文件如下:"|tee -a $LOG/conf-$DATE.log
+	cat $CONF/conf.txt|tee -a $LOG/conf-$DATE.log
+	ls /data/update/conf|tee -a $LOG/conf-$DATE.log
+	chown www.www -R /data/update/conf
+	ready
+	if [ $anw = "yes" ];then
+		update_conf
+		rm -rf /data/update/conf/*
+		rm -rf $CONF/*
+	else
+		exit
+	fi
+	;;
+all)
+	echo "更新WEB服务的服务器和WEB目录如下："|tee -a $LOG/resin-$DATE.log
+        cat $CONF/resin.conf|tee -a $LOG/resin-$DATE.log
+        echo "更新IMAGE图片文件的服务器和IMAGE目录如下："|tee -a $LOG/image-$DATE.log
+        cat $CONF/image.conf|tee -a $LOG/image-$DATE.log
+
+        ready
+        if [ $anw = "yes" ];then
+                TAR_IMAGE
+                update_image
+		TAR_WAR
+		update_resin
+		rm -rf $CONF/*
+        else
+                exit
+        fi
+	;;
+zzb)
+	echo "更新WEB服务的服务器和WEB目录如下："|tee -a $LOG/zzb-$DATE.log
+	cat $CONF/zzb.conf|tee -a $LOG/zzb-$DATE.log
+	ready
+	if [ $anw = "yes" ];then
+		UNTAR_ZZB
+		update_zzb
+		rm -rf $CONF/*
+	else
+		exit
+	fi
+	;;
+atm)
+        echo "更新WEB服务的服务器和WEB目录如下："|tee -a $LOG/atm-$DATE.log
+        cat $CONF/atm.conf|tee -a $LOG/atm-$DATE.log
+        ready
+        if [ $anw = "yes" ];then
+                UNTAR_ATM
+                UPDATE_ATM
+                rm -rf $CONF/*
+        else
+                exit
+        fi
+        ;;
+cipm)
+        echo "更新WEB服务的服务器和WEB目录如下："|tee -a $LOG/cipm-$DATE.log
+        cat $CONF/cipm.conf|tee -a $LOG/cipm-$DATE.log
+        ready
+        if [ $anw = "yes" ];then
+                UNTAR_CIPM
+                UPDATE_CIPM
+                rm -rf $CONF/*
+        else
+                exit
+        fi
+        ;;
+cm)
+        echo "更新WEB服务的服务器和WEB目录如下："|tee -a $LOG/cm-$DATE.log
+        cat $CONF/cm.conf|tee -a $LOG/cm-$DATE.log
+        ready
+        if [ $anw = "yes" ];then
+                UNTAR_CM
+                UPDATE_CM
+                rm -rf $CONF/*
+        else
+                exit
+        fi
+        ;;
+cx)
+        echo "更新WEB服务的服务器和WEB目录如下："|tee -a $LOG/cx-$DATE.log
+        cat $CONF/cx.conf|tee -a $LOG/cx-$DATE.log
+        ready
+        if [ $anw = "yes" ];then
+                UNTAR_CX
+                UPDATE_CX
+                rm -rf $CONF/*
+        else
+                exit
+        fi
+        ;;
+go2)
+        echo "更新WEB服务的服务器和WEB目录如下："|tee -a $LOG/go2-$DATE.log
+        cat $CONF/go2.conf|tee -a $LOG/go2-$DATE.log
+        ready
+        if [ $anw = "yes" ];then
+                UNTAR_GO2
+                UPDATE_GO2
+                rm -rf $CONF/*
+        else
+                exit
+        fi
+        ;;
+order)
+        echo "更新WEB服务的服务器和WEB目录如下："|tee -a $LOG/order-$DATE.log
+        cat $CONF/order.conf|tee -a $LOG/order-$DATE.log
+        ready
+        if [ $anw = "yes" ];then
+                UNTAR_ORDER
+                UPDATE_ORDER
+                rm -rf $CONF/*
+        else
+                exit
+        fi
+        ;;
+
+alltrust_net)
+        echo "更新WEB服务的服务器和WEB目录如下："|tee -a $LOG/alltrust_net-$DATE.log
+        cat $CONF/businessprocess_alltrustnet.conf|tee -a $LOG/alltrust_net-$DATE.log
+        ready
+        if [ $anw = "yes" ];then
+                UNTAR_BUSINESSPROCESS_ALLTRUST_NET
+                UPDATE_BUSINESSPROCESS_ALLTRUST_NET
+                rm -rf $CONF/*
+        else
+                exit
+        fi
+        ;;
+
+alltrust_tradition)
+        echo "更新WEB服务的服务器和WEB目录如下："|tee -a $LOG/alltrust_tradition-$DATE.log
+        cat $CONF/businessprocess_alltrusttradition.conf|tee -a $LOG/alltrust_tradition-$DATE.log
+        ready
+        if [ $anw = "yes" ];then
+                UNTAR_BUSINESSPROCESS_ALLTRUST_TRADITION
+                UPDATE_BUSINESSPROCESS_ALLTRUST_TRADITION
+                rm -rf $CONF/*
+        else
+                exit
+        fi
+        ;;
+
+bpic_net)
+        echo "更新WEB服务的服务器和WEB目录如下："|tee -a $LOG/bpic_net-$DATE.log
+        cat $CONF/businessprocess_bpicnet.conf|tee -a $LOG/bpic_net-$DATE.log
+        ready
+        if [ $anw = "yes" ];then
+                UNTAR_BUSINESSPROCESS_BPIC_NET
+                UPDATE_BUSINESSPROCESS_BPIC_NET
+                rm -rf $CONF/*
+        else
+                exit
+        fi
+        ;;
+
+cpic_net)
+        echo "更新WEB服务的服务器和WEB目录如下："|tee -a $LOG/cpic_net-$DATE.log
+        cat $CONF/businessprocess_cpicnet.conf|tee -a $LOG/cpic_net-$DATE.log
+        ready
+        if [ $anw = "yes" ];then
+                UNTAR_BUSINESSPROCESS_CPIC_NET
+                UPDATE_BUSINESSPROCESS_CPIC_NET
+                rm -rf $CONF/*
+        else
+                exit
+        fi
+        ;;
+
+sinosafe_tradition)
+        echo "更新WEB服务的服务器和WEB目录如下："|tee -a $LOG/sinosafe_tradition-$DATE.log
+        cat $CONF/businessprocess_sinosafetradition.conf|tee -a $LOG/sinosafe_tradition-$DATE.log
+        ready
+        if [ $anw = "yes" ];then
+                UNTAR_BUSINESSPROCESS_SINOSAFE_TRADITION
+                UPDATE_BUSINESSPROCESS_SINOSAFE_TRADITION
+                rm -rf $CONF/*
+        else
+                exit
+        fi
+        ;;
+
+sinosig_net)
+        echo "更新WEB服务的服务器和WEB目录如下："|tee -a $LOG/sinosig_net-$DATE.log
+        cat $CONF/businessprocess_sinosignet.conf|tee -a $LOG/sinosig_net-$DATE.log
+        ready
+        if [ $anw = "yes" ];then
+                UNTAR_BUSINESSPROCESS_SINOSIG_NET
+                UPDATE_BUSINESSPROCESS_SINOSIG_NET
+                rm -rf $CONF/*
+        else
+                exit
+        fi
+        ;;
+
+tpaic_net)
+        echo "更新WEB服务的服务器和WEB目录如下："|tee -a $LOG/tpaic_net-$DATE.log
+        cat $CONF/businessprocess_tpaicnet.conf|tee -a $LOG/tpaic_net-$DATE.log
+        ready
+        if [ $anw = "yes" ];then
+                UNTAR_BUSINESSPROCESS_TPAIC_NET
+                UPDATE_BUSINESSPROCESS_TPAIC_NET
+                rm -rf $CONF/*
+        else
+                exit
+        fi
+        ;;
+
+virtual_net)
+        echo "更新WEB服务的服务器和WEB目录如下："|tee -a $LOG/virtual_net-$DATE.log
+        cat $CONF/businessprocess_virtualnet.conf|tee -a $LOG/virtual_net-$DATE.log
+        ready
+        if [ $anw = "yes" ];then
+                UNTAR_BUSINESSPROCESS_VIRTUAL_NET
+                UPDATE_BUSINESSPROCESS_VIRTUAL_NET
+                rm -rf $CONF/*
+        else
+                exit
+        fi
+        ;;
+
+
+ehuatai_tradition)
+        echo "更新WEB服务的服务器和WEB目录如下："|tee -a $LOG/ehuatai_tradition-$DATE.log
+        cat $CONF/businessprocess_ehuataitradition.conf|tee -a $LOG/ehuatai_tradition-$DATE.log
+        ready
+        if [ $anw = "yes" ];then
+                UNTAR_BUSINESSPROCESS_EHUATAI_TRADITION
+                UPDATE_BUSINESSPROCESS_EHUATAI_TRADITION
+                rm -rf $CONF/*
+        else
+                exit
+        fi
+        ;;
+
+*)
+	usage
+	exit
+	;;
+esac

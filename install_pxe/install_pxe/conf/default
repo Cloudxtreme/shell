@@ -1,0 +1,17 @@
+default 0
+timeout 300
+prompt 1
+display msgs/boot.msg
+F1 msgs/boot.msg
+F2 msgs/general.msg
+F3 msgs/expert.msg
+F4 msgs/param.msg
+F5 msgs/rescue.msg
+F7 msgs/snake.msg
+
+label 0
+  localboot 1
+
+label 1
+  kernel linux/vmlinuz
+  append initrd=linux/initrd.img ksdevice=eth0 ramdisk_size=9025 ks=ftp://172.16.1.1/pub/scripts/ks.cfg
